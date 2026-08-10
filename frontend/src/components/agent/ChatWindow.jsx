@@ -1,55 +1,54 @@
 import { useState, useRef, useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
-import { Send } from "lucide-react";
+import { Send, Sparkles } from "lucide-react";
 import Card from "../ui/Card";
 import Message from "./Message";
-import SuggestedQuestions from "./SuggestedQuestions";
-import { mockAgentSuggestions, mockBatches } from "../../data/mockData";
 
-// AGENT INTEGRATION NOTE: replace mockReply() below with a real call to
-// POST /api/agent/query (see agent/agent.js + agent/workflow/operations.graph.js
-// in the backend). Keep the same { role, text } message shape so this
-// component doesn't need to change when the real agent is wired in.
-function mockReply(question) {
-  const lower = question.toLowerCase();
-  if (lower.includes("sell first") || lower.includes("highest risk") || lower.includes("priority")) {
-    const worst = [...mockBatches].sort((a, b) => a.shelfLifeDays - b.shelfLifeDays)[0];
-    return `${worst.produce} batch ${worst.id} should be prioritized — it has ${worst.shelfLifeDays} days of estimated shelf life remaining and a ${worst.spoilageRisk}% spoilage risk.`;
-  }
-  if (lower.includes("travel") || lower.includes("ship")) {
-    return "Onion batch ONI-009 is the safest to send farther — 14 days of shelf life and only 6% spoilage risk.";
-  }
-  if (lower.includes("waste")) {
-    return "Discounting BAN-021 now and redirecting PAP-033 to processing today would prevent an estimated 45 kg of avoidable waste this week.";
-  }
-  return "Based on current inventory, I'd focus on batches with shelf life under 2 days first — PAP-033 and BAN-021 need action today.";
-}
-
+/**
+ * AI Insights chat window.
+ * The backend does not expose a real chat/agent endpoint via Express yet.
+ * This component clearly communicates that AI insights are per-batch only
+ * and directs users to the Batch Details page for the actual /decision/agent call.
+ *
+ * No mock replies — no fabricated data.
+ */
 export default function ChatWindow() {
-  const { t } = useTranslation();
-  const [messages, setMessages] = useState([{ role: "agent", text: t("agent.greeting") }]);
+  const [messages, setMessages] = useState([
+    {
+      role: "agent",
+      text: 'AI Insights are available on individual batch pages. Navigate to a batch and click "Get AI Insights" to get an explanation of the decision engine\'s recommendation.',
+    },
+  ]);
   const [input, setInput] = useState("");
-  const [thinking, setThinking] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, thinking]);
+  }, [messages]);
 
   function send(text) {
     if (!text.trim()) return;
-    setMessages((m) => [...m, { role: "user", text }]);
+    setMessages((m) => [
+      ...m,
+      { role: "user", text },
+      {
+        role: "agent",
+        text: 'AI batch insights are only available on the Batch Details page. Select a batch from the Batches list and click "Get AI Insights" to generate an explanation.',
+      },
+    ]);
     setInput("");
-    setThinking(true);
-    setTimeout(() => {
-      setMessages((m) => [...m, { role: "agent", text: mockReply(text) }]);
-      setThinking(false);
-    }, 900);
   }
 
   return (
-    <Card className="flex flex-col h-[560px]" padded={false}>
+    <Card className="flex flex-col h-[480px]" padded={false}>
+      <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
+        <Sparkles size={16} className="text-brand-700" />
+        <span className="text-sm font-semibold text-ink">AI Insights</span>
+        <span className="text-xs text-muted ml-1">
+          — explanation only, not source of truth
+        </span>
+      </div>
+
       <div className="flex-1 overflow-y-auto scrollbar-thin p-5 space-y-4">
         <AnimatePresence initial={false}>
           {messages.map((m, i) => (
@@ -62,16 +61,11 @@ export default function ChatWindow() {
               <Message role={m.role} text={m.text} />
             </motion.div>
           ))}
-          {thinking && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <Message role="agent" text={t("agent.checking")} />
-            </motion.div>
-          )}
         </AnimatePresence>
         <div ref={bottomRef} />
       </div>
-      <div className="p-4 border-t border-border space-y-3">
-        <SuggestedQuestions questions={mockAgentSuggestions} onSelect={send} />
+
+      <div className="p-4 border-t border-border">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -82,7 +76,7 @@ export default function ChatWindow() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={t("agent.inputPlaceholder")}
+            placeholder="Ask about a batch…"
             className="flex-1 rounded-lg border border-border px-3.5 py-2.5 text-sm outline-none focus:border-brand-500 transition-colors"
           />
           <motion.button

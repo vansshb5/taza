@@ -1,280 +1,93 @@
 import { useNavigate } from "react-router-dom";
-
-const farmers = [
-  {
-    id: "F102",
-    name: "Raj Farm",
-    crop: "Tomato",
-    quantity: "420 kg",
-    location: "Nashik",
-    status: "Ready",
-  },
-  {
-    id: "F118",
-    name: "Green Valley",
-    crop: "Mango",
-    quantity: "180 kg",
-    location: "Pune",
-    status: "Pending",
-  },
-  {
-    id: "F121",
-    name: "Fresh Fields",
-    crop: "Capsicum",
-    quantity: "260 kg",
-    location: "Nashik",
-    status: "Ready",
-  },
-  {
-    id: "F130",
-    name: "Punjab Organics",
-    crop: "Potato",
-    quantity: "510 kg",
-    location: "Punjab",
-    status: "Scheduled",
-  },
-];
+import { useBatches } from "../../hooks/useBatches";
+import { useDashboard } from "../../hooks/useDashboard";
+import { formatKg } from "../../utils/formatting";
 
 export default function AggregatorDashboard() {
   const navigate = useNavigate();
+  const { batches, loading } = useBatches();
+  const { wasteMetrics } = useDashboard();
 
   return (
     <div className="role-page">
-
       <div className="role-header">
         <div>
           <span className="role-badge">🚚 Aggregator</span>
-
           <h1>Good morning, Aggregator 👋</h1>
-
-          <p>
-            Coordinate farmers, collections, routes and produce batches.
-          </p>
+          <p>Coordinate collection from farmers and manage incoming produce.</p>
         </div>
-
-        <button onClick={() => navigate("/batches")}>
-          View Batches
-        </button>
       </div>
-
 
       <div className="kpi-grid">
-
-        <KPI value="24" label="Active Farmers" />
-
-        <KPI value="2.4 T" label="Collected Today" />
-
-        <KPI value="18" label="Active Batches" />
-
-        <KPI value="94%" label="Average Quality" />
-
+        <KPI value={loading ? "…" : wasteMetrics?.totalBatches ?? 0} label="Active Batches" />
+        <KPI value={loading ? "…" : (wasteMetrics?.totalInventoryKg ?? 0) + " kg"} label="Total Inventory" />
+        <KPI value={loading ? "…" : wasteMetrics?.atRiskBatchCount ?? 0} label="At-Risk" />
+        <KPI value={loading ? "…" : wasteMetrics?.criticalBatchCount ?? 0} label="Critical" />
       </div>
 
-
       <div className="two-column">
-
         <div className="panel">
-
           <div className="panel-header">
-
             <div>
-              <h2>Farmer Network</h2>
-
-              <p>
-                Farmers requiring collection today
-              </p>
+              <h2>Incoming Batches</h2>
+              <p>All active batches from MongoDB</p>
             </div>
-
-            <button>
-              + Add Farmer
-            </button>
-
+            <button onClick={() => navigate("/inspect")}>+ New Batch</button>
           </div>
-
-
-          <table>
-
-            <thead>
-
-              <tr>
-                <th>Farmer</th>
-                <th>Crop</th>
-                <th>Quantity</th>
-                <th>Location</th>
-                <th>Status</th>
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {farmers.map((farmer) => (
-
-                <tr key={farmer.id}>
-
-                  <td>
-                    <strong>{farmer.name}</strong>
-                    <br />
-                    <small>{farmer.id}</small>
-                  </td>
-
-                  <td>{farmer.crop}</td>
-
-                  <td>{farmer.quantity}</td>
-
-                  <td>{farmer.location}</td>
-
-                  <td>
-                    <span className="status">
-                      {farmer.status}
-                    </span>
-                  </td>
-
+          {loading ? (
+            <p style={{ color: "#5b6b60", fontSize: 14 }}>Loading…</p>
+          ) : batches.length === 0 ? (
+            <p style={{ color: "#5b6b60", fontSize: 14 }}>No batches yet.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Batch</th>
+                  <th>Product</th>
+                  <th>Quantity</th>
+                  <th>Origin</th>
+                  <th>Status</th>
                 </tr>
-
-              ))}
-
-            </tbody>
-
-          </table>
-
+              </thead>
+              <tbody>
+                {batches.slice(0, 6).map((b) => (
+                  <tr key={b._id} style={{ cursor: "pointer" }} onClick={() => navigate(`/batches/${b._id}`)}>
+                    <td><strong>{b.batchCode ?? b._id}</strong></td>
+                    <td>{b.productName}</td>
+                    <td>{formatKg(b.quantity)}</td>
+                    <td>{b.origin}</td>
+                    <td><span className="status">{b.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
-
 
         <div className="panel ai-panel">
-
-          <span className="ai-icon">✦</span>
-
-          <h2>AI Route Advisor</h2>
-
-          <p>
-            Farmers F102 and F121 are located on the
-            same route. Combining their pickups can
-            reduce transportation cost by approximately
-            16%.
-          </p>
-
-          <button>
-            Optimize Route →
-          </button>
-
+          <span className="ai-icon">🤖</span>
+          <h2>AI Recommendations</h2>
+          <p>View AI-powered actionable decisions for each batch — sorted by urgency.</p>
+          <button onClick={() => navigate("/recommendations")}>View Recommendations →</button>
         </div>
-
       </div>
-
 
       <div className="panel">
-
-        <h2>Collection Actions</h2>
-
+        <h2>Quick Actions</h2>
         <div className="action-grid">
-
-          <Action text="Add Farmer" />
-
-          <Action text="Schedule Pickup" />
-
-          <Action text="Create Collection" />
-
-          <Action text="Combine Batches" />
-
+          <Action text="Create Batch" onClick={() => navigate("/inspect")} />
+          <Action text="All Batches" onClick={() => navigate("/batches")} />
+          <Action text="Recommendations" onClick={() => navigate("/recommendations")} />
+          <Action text="Traceability" onClick={() => navigate("/traceability")} />
         </div>
-
       </div>
-
-
-      <div className="two-column">
-
-        <div className="panel">
-
-          <h2>Collection Trend</h2>
-
-          <div className="chart">
-
-            {[45, 60, 72, 55, 85, 92, 78].map(
-              (height, index) => (
-
-                <div
-                  key={index}
-                  style={{
-                    height: `${height}%`,
-                  }}
-                />
-
-              )
-            )}
-
-          </div>
-
-          <div className="chart-labels">
-
-            <span>Mon</span>
-            <span>Tue</span>
-            <span>Wed</span>
-            <span>Thu</span>
-            <span>Fri</span>
-            <span>Sat</span>
-            <span>Sun</span>
-
-          </div>
-
-        </div>
-
-
-        <div className="panel">
-
-          <h2>Recent Activity</h2>
-
-          <Activity text="Pickup scheduled for Farmer F102" />
-
-          <Activity text="New batch collected from F121" />
-
-          <Activity text="Route optimization completed" />
-
-          <Activity text="Farmer F118 added to network" />
-
-        </div>
-
-      </div>
-
     </div>
   );
 }
-
 
 function KPI({ value, label }) {
-  return (
-    <div className="kpi-card">
-
-      <strong>{value}</strong>
-
-      <span>{label}</span>
-
-    </div>
-  );
+  return <div className="kpi-card"><strong>{value}</strong><span>{label}</span></div>;
 }
-
-
-function Action({ text }) {
-  return (
-    <button className="action-card">
-
-      <span>{text}</span>
-
-      <span>→</span>
-
-    </button>
-  );
-}
-
-
-function Activity({ text }) {
-  return (
-    <div className="activity">
-
-      <span>●</span>
-
-      {text}
-
-    </div>
-  );
+function Action({ text, onClick }) {
+  return <button className="action-card" onClick={onClick}><span>{text}</span><span>→</span></button>;
 }

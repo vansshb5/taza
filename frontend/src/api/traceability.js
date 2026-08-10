@@ -1,11 +1,14 @@
 import apiClient from "./client";
-import { mockPassport } from "../data/mockData";
 
-const USE_MOCK = true; // BACKEND TEAM: flip once /traceability endpoints exist
+function unwrap(response) {
+  return response.data?.data ?? response.data;
+}
 
+/**
+ * GET /api/traceability/:batchId
+ * Returns the full supply-chain passport for a batch.
+ */
 export async function getBatchPassport(batchId) {
-  if (USE_MOCK) return Promise.resolve({ ...mockPassport, batchId });
-  const { data } = await apiClient.get(`/traceability/${batchId}`);
-  return data;
-  // GET /api/traceability/:batchId -> full QR passport history (see docs/api.md)
+  const response = await apiClient.get(`/traceability/${batchId}`);
+  return unwrap(response);
 }

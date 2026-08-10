@@ -1,257 +1,93 @@
-const marketData = [
-  {
-    product: "Tomato",
-    arrival: "2.1 T",
-    demand: "High",
-    price: "₹32/kg",
-  },
-  {
-    product: "Mango",
-    arrival: "1.4 T",
-    demand: "Medium",
-    price: "₹68/kg",
-  },
-  {
-    product: "Potato",
-    arrival: "2.8 T",
-    demand: "Stable",
-    price: "₹24/kg",
-  },
-  {
-    product: "Capsicum",
-    arrival: "0.9 T",
-    demand: "High",
-    price: "₹54/kg",
-  },
-];
+import { useNavigate } from "react-router-dom";
+import { useBatches } from "../../hooks/useBatches";
+import { useDashboard } from "../../hooks/useDashboard";
+import { formatKg } from "../../utils/formatting";
 
 export default function MandiDashboard() {
+  const navigate = useNavigate();
+  const { batches, loading } = useBatches();
+  const { wasteMetrics } = useDashboard();
+
   return (
     <div className="role-page">
-
       <div className="role-header">
-
         <div>
-
-          <span className="role-badge">
-            🏪 Mandi
-          </span>
-
-          <h1>Market Overview 👋</h1>
-
-          <p>
-            Track market arrivals, prices, buyers
-            and produce demand.
-          </p>
-
+          <span className="role-badge">🏪 Mandi</span>
+          <h1>Good morning, Mandi 👋</h1>
+          <p>Track market arrivals, demand and produce movement.</p>
         </div>
-
       </div>
-
 
       <div className="kpi-grid">
-
-        <KPI value="42" label="Today's Arrivals" />
-
-        <KPI value="8.6 T" label="Market Volume" />
-
-        <KPI value="31" label="Active Buyers" />
-
-        <KPI value="14" label="Pending Dispatches" />
-
+        <KPI value={loading ? "…" : wasteMetrics?.totalBatches ?? 0} label="Active Batches" />
+        <KPI value={loading ? "…" : (wasteMetrics?.totalInventoryKg ?? 0) + " kg"} label="Total Volume" />
+        <KPI value={loading ? "…" : wasteMetrics?.atRiskBatchCount ?? 0} label="At-Risk" />
+        <KPI value={loading ? "…" : wasteMetrics?.estimatedSpoilageKg ?? 0} label="Est. Spoilage (kg)" />
       </div>
 
-
       <div className="two-column">
-
         <div className="panel">
-
           <div className="panel-header">
-
             <div>
-              <h2>Market Activity</h2>
-              <p>Today's market conditions</p>
+              <h2>Today's Arrivals</h2>
+              <p>Active batches in system</p>
             </div>
-
-            <button>
-              + Register Arrival
-            </button>
-
+            <button onClick={() => navigate("/batches")}>View All</button>
           </div>
-
-
-          <table>
-
-            <thead>
-
-              <tr>
-                <th>Product</th>
-                <th>Arrival</th>
-                <th>Demand</th>
-                <th>Price</th>
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {marketData.map((item) => (
-
-                <tr key={item.product}>
-
-                  <td>
-                    <strong>
-                      {item.product}
-                    </strong>
-                  </td>
-
-                  <td>{item.arrival}</td>
-
-                  <td>
-                    <span className="status">
-                      {item.demand}
-                    </span>
-                  </td>
-
-                  <td>{item.price}</td>
-
+          {loading ? (
+            <p style={{ color: "#5b6b60", fontSize: 14 }}>Loading…</p>
+          ) : batches.length === 0 ? (
+            <p style={{ color: "#5b6b60", fontSize: 14 }}>No batches yet.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Batch</th>
+                  <th>Produce</th>
+                  <th>Quantity</th>
+                  <th>Origin</th>
+                  <th>Status</th>
                 </tr>
-
-              ))}
-
-            </tbody>
-
-          </table>
-
+              </thead>
+              <tbody>
+                {batches.slice(0, 6).map((b) => (
+                  <tr key={b._id} style={{ cursor: "pointer" }} onClick={() => navigate(`/batches/${b._id}`)}>
+                    <td><strong>{b.batchCode ?? b._id}</strong></td>
+                    <td>{b.productName}</td>
+                    <td>{formatKg(b.quantity)}</td>
+                    <td>{b.origin}</td>
+                    <td><span className="status">{b.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
-
 
         <div className="panel ai-panel">
-
-          <span className="ai-icon">
-            ✦
-          </span>
-
-          <h2>AI Market Insight</h2>
-
-          <p>
-            Tomato demand is currently 22% above
-            today's arrivals. Prioritize tomato
-            batches for buyer matching.
-          </p>
-
-          <button>
-            Match Buyers →
-          </button>
-
+          <span className="ai-icon">✦</span>
+          <h2>AI Decision Engine</h2>
+          <p>Get actionable sell/redistribute/discount recommendations powered by AI.</p>
+          <button onClick={() => navigate("/recommendations")}>View Recommendations →</button>
         </div>
-
       </div>
-
 
       <div className="panel">
-
-        <h2>Market Actions</h2>
-
+        <h2>Quick Actions</h2>
         <div className="action-grid">
-
-          <Action text="Register Arrival" />
-
-          <Action text="View Demand" />
-
-          <Action text="Match Buyer" />
-
-          <Action text="Create Listing" />
-
+          <Action text="Inspect Produce" onClick={() => navigate("/inspect")} />
+          <Action text="All Batches" onClick={() => navigate("/batches")} />
+          <Action text="Recommendations" onClick={() => navigate("/recommendations")} />
+          <Action text="Traceability" onClick={() => navigate("/traceability")} />
         </div>
-
       </div>
-
-
-      <div className="two-column">
-
-        <div className="panel">
-
-          <h2>Price Trend</h2>
-
-          <div className="chart">
-
-            {[50, 65, 55, 72, 68, 85, 92].map(
-              (height, index) => (
-
-                <div
-                  key={index}
-                  style={{
-                    height: `${height}%`,
-                  }}
-                />
-
-              )
-            )}
-
-          </div>
-
-          <div className="chart-labels">
-
-            <span>Mon</span>
-            <span>Tue</span>
-            <span>Wed</span>
-            <span>Thu</span>
-            <span>Fri</span>
-            <span>Sat</span>
-            <span>Sun</span>
-
-          </div>
-
-        </div>
-
-
-        <div className="panel">
-
-          <h2>Buyer Activity</h2>
-
-          <Activity text="Delhi Fresh Stores requested 420 kg tomato" />
-
-          <Activity text="GreenMart requested 180 kg mango" />
-
-          <Activity text="FreshKart listed new purchase order" />
-
-          <Activity text="Buyer matching completed" />
-
-        </div>
-
-      </div>
-
     </div>
   );
 }
-
 
 function KPI({ value, label }) {
-  return (
-    <div className="kpi-card">
-      <strong>{value}</strong>
-      <span>{label}</span>
-    </div>
-  );
+  return <div className="kpi-card"><strong>{value}</strong><span>{label}</span></div>;
 }
-
-
-function Action({ text }) {
-  return (
-    <button className="action-card">
-      <span>{text}</span>
-      <span>→</span>
-    </button>
-  );
-}
-
-
-function Activity({ text }) {
-  return (
-    <div className="activity">
-      <span>●</span>
-      {text}
-    </div>
-  );
+function Action({ text, onClick }) {
+  return <button className="action-card" onClick={onClick}><span>{text}</span><span>→</span></button>;
 }

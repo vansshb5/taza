@@ -1,42 +1,47 @@
-import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
-import { Package, AlertTriangle, ListChecks, Leaf } from "lucide-react";
+import { Package, AlertTriangle, TrendingDown, Boxes } from "lucide-react";
 import Card from "../ui/Card";
 import AnimatedCounter from "../ui/AnimatedCounter";
-import { formatCurrency } from "../../utils/formatting";
 
-export default function OverviewCards({ summary }) {
-  const { t } = useTranslation();
-  if (!summary) return null;
+/**
+ * Displays real wasteMetrics from GET /api/dashboard/overview.
+ *
+ * Real shape (waste.service.js computeWasteMetrics):
+ *   totalBatches, totalInventoryKg, atRiskBatchCount, atRiskInventoryKg,
+ *   criticalBatchCount, estimatedSpoilageKg, estimatedSpoilagePercent,
+ *   estimatedValueAtRisk, batchesWithPredictions, disclaimer
+ */
+export default function OverviewCards({ wasteMetrics }) {
+  if (!wasteMetrics) return null;
 
   const stats = [
     {
-      label: t("dashboard.totalInventory"),
-      value: summary.totalInventoryKg,
+      label: "Total Batches",
+      value: wasteMetrics.totalBatches ?? 0,
+      suffix: "",
+      icon: Boxes,
+      tone: "text-brand-700 bg-brand-50",
+    },
+    {
+      label: "Total Inventory",
+      value: wasteMetrics.totalInventoryKg ?? 0,
       suffix: " kg",
       icon: Package,
       tone: "text-brand-700 bg-brand-50",
     },
     {
-      label: t("dashboard.atRiskInventory"),
-      value: summary.atRiskInventoryKg,
-      suffix: " kg",
+      label: "At-Risk Batches",
+      value: wasteMetrics.atRiskBatchCount ?? 0,
+      suffix: "",
       icon: AlertTriangle,
       tone: "text-risk-high bg-[#FBEAE6]",
     },
     {
-      label: t("dashboard.priorityBatchesStat"),
-      value: summary.priorityBatches,
-      suffix: "",
-      icon: ListChecks,
+      label: "Est. Spoilage",
+      value: wasteMetrics.estimatedSpoilageKg ?? 0,
+      suffix: " kg",
+      icon: TrendingDown,
       tone: "text-risk-medium bg-[#FBF1DF]",
-    },
-    {
-      label: t("dashboard.wasteAvoided"),
-      value: summary.estimatedWasteAvoidedKg,
-      suffix: ` kg · ${formatCurrency(summary.wasteAvoidedValue)}`,
-      icon: Leaf,
-      tone: "text-brand-700 bg-brand-50",
     },
   ];
 
@@ -67,6 +72,11 @@ export default function OverviewCards({ summary }) {
           </Card>
         </motion.div>
       ))}
+      {wasteMetrics.disclaimer && (
+        <p className="col-span-full text-[11px] text-muted italic mt-1">
+          ⚠ {wasteMetrics.disclaimer}
+        </p>
+      )}
     </motion.div>
   );
 }

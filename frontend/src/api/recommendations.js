@@ -1,11 +1,37 @@
 import apiClient from "./client";
-import { mockRecommendations } from "../data/mockData";
 
-const USE_MOCK = true; // BACKEND TEAM: flip once decision-engine/recommendation.engine.js is exposed via REST
+function unwrap(response) {
+  return response.data?.data ?? response.data;
+}
 
-export async function getRecommendations() {
-  if (USE_MOCK) return Promise.resolve(mockRecommendations);
-  const { data } = await apiClient.get("/recommendations");
-  return data;
-  // GET /api/recommendations
+/**
+ * POST /api/recommendations/:batchId/generate
+ * Runs the decision engine for a batch.
+ * Requires: a prediction must already exist (POST /api/predictions/:batchId/run first).
+ * Returns: Recommendation { actionType, urgencyLevel, reason, reasonFactors,
+ *                           expectedRevenue, expectedProfit, expectedWastePercent, expectedWasteKg,
+ *                           confidence, targetMarket, targetLocation }
+ */
+export async function generateRecommendation(batchId) {
+  const response = await apiClient.post(`/recommendations/${batchId}/generate`);
+  return unwrap(response);
+}
+
+/**
+ * GET /api/recommendations/:batchId
+ * Returns the latest recommendation for a batch.
+ */
+export async function getLatestRecommendation(batchId) {
+  const response = await apiClient.get(`/recommendations/${batchId}`);
+  return unwrap(response);
+}
+
+/**
+ * GET /api/recommendations/:batchId/history
+ */
+export async function getRecommendationHistory(batchId, limit = 10) {
+  const response = await apiClient.get(`/recommendations/${batchId}/history`, {
+    params: { limit },
+  });
+  return unwrap(response) ?? [];
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { getBatches } from "../api/batches";
 
 export function useBatches() {
@@ -6,19 +6,12 @@ export function useBatches() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const refresh = useCallback(() => {
-    setLoading(true);
-    return getBatches()
-      .then((data) => setBatches(data))
-      .catch((err) => setError(err))
-      .finally(() => setLoading(false));
-  }, []);
-
   useEffect(() => {
     let active = true;
+    setLoading(true);
     getBatches()
       .then((data) => {
-        if (active) setBatches(data);
+        if (active) setBatches(Array.isArray(data) ? data : []);
       })
       .catch((err) => active && setError(err))
       .finally(() => active && setLoading(false));
@@ -27,5 +20,5 @@ export function useBatches() {
     };
   }, []);
 
-  return { batches, loading, error, refresh };
+  return { batches, loading, error };
 }
