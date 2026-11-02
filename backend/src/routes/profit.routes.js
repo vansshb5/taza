@@ -4,8 +4,11 @@ import {
     getLatestProfitAnalysisController,
     getProfitAnalysisHistoryController,
 } from "../controllers/profit.controller.js";
+import { resolveBatchParam } from "../middleware/resolveBatch.middleware.js";
 
 const router = express.Router();
+
+router.param("batchId", resolveBatchParam);
 
 // POST /api/profit/:batchId/analyze    → run P&L analysis
 // GET  /api/profit/:batchId            → latest analysis

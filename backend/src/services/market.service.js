@@ -33,7 +33,10 @@ export const getMarketPrices = async (produceType, location = null) => {
     // Last 7 days of data
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    query.observationDate = { $gte: sevenDaysAgo };
+    query.$or = [
+        { observationDate: { $gte: sevenDaysAgo } },
+        { source: "demo_seed" },
+    ];
 
     return MarketPrice.find(query)
         .sort({ observationDate: -1 })

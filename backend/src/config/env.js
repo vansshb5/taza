@@ -11,6 +11,8 @@ const env = {
     aiServiceUrl: process.env.AI_SERVICE_URL || "http://localhost:8000",
     // How long Express waits for the Python AI service per request.
     aiServiceTimeoutMs: Number(process.env.AI_SERVICE_TIMEOUT_MS) || 120_000,
+    jwtSecret: process.env.JWT_SECRET || "taza-super-secret-jwt-key-2026",
+    jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
 };
 
 export default env;

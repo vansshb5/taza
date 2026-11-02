@@ -3,8 +3,11 @@ import {
     getBatchPassportController,
     getSupplyChainSummaryController,
 } from "../controllers/traceability.controller.js";
+import { resolveBatchParam } from "../middleware/resolveBatch.middleware.js";
 
 const router = express.Router();
+
+router.param("batchId", resolveBatchParam);
 
 // GET /api/traceability/supply-chain/summary
 // GET /api/traceability/:batchId

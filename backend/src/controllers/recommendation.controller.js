@@ -1,9 +1,19 @@
-import {
-    generateRecommendation,
-    getLatestRecommendation,
-    getRecommendationHistory,
-} from "../services/recommendation.service.js";
+import { generateRecommendation, getLatestRecommendation, getRecommendationHistory, getAllRecommendations } from "../services/recommendation.service.js";
 import { sendSuccess, sendError } from "../utils/response.js";
+
+/**
+ * GET /api/recommendations
+ * Get all latest recommendations across batches.
+ */
+export const getAllRecommendationsController = async (req, res, next) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+        const recommendations = await getAllRecommendations(limit);
+        return sendSuccess(res, 200, recommendations);
+    } catch (error) {
+        next(error);
+    }
+};
 
 /**
  * POST /api/recommendations/:batchId/generate

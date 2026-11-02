@@ -5,7 +5,7 @@ import {
   Navigate,
 } from "react-router-dom";
 
-import {AppProvider} from "./context/AppContext";
+import { AppProvider } from "./context/AppContext";
 import AppShell from "./components/layout/AppShell";
 
 import Dashboard from "./pages/Dashboard";
@@ -13,7 +13,9 @@ import InspectProduce from "./pages/InspectProduce";
 import Batches from "./pages/Batches";
 import BatchDetails from "./pages/BatchDetails";
 import Traceability from "./pages/Traceability";
+import Recommendations from "./pages/Recommendations";
 import Agent from "./pages/Agent";
+import Auth from "./pages/Auth";
 
 export default function App() {
   return (
@@ -22,9 +24,14 @@ export default function App() {
         <Routes>
 
           {/* =====================================================
+              AUTHENTICATION (Standalone layout)
+          ===================================================== */}
+          <Route path="/login" element={<Auth />} />
+          <Route path="/register" element={<Auth />} />
+
+          {/* =====================================================
               MAIN APPLICATION
           ===================================================== */}
-
           <Route element={<AppShell />}>
 
             {/* AI Operations Dashboard */}
@@ -57,6 +64,12 @@ export default function App() {
               element={<BatchDetails />}
             />
 
+            {/* Recommendations */}
+            <Route
+              path="/recommendations"
+              element={<Recommendations />}
+            />
+
             {/* Supply Chain / Traceability */}
             <Route
               path="/traceability"
@@ -74,7 +87,6 @@ export default function App() {
           {/* =====================================================
               FALLBACK
           ===================================================== */}
-
           <Route
             path="*"
             element={<Navigate to="/" replace />}

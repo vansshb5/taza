@@ -33,6 +33,20 @@ const THRESHOLDS = {
     COMFORTABLE_SHELF_LIFE_DAYS: 4,   // > 4 days → HOLD may be appropriate
 };
 
+// ── Helper functions ─────────────────────────────────────────────────────────
+
+const findLocalMarket = (marketAnalysis, batch) => {
+    if (!marketAnalysis || marketAnalysis.length === 0) return null;
+    return (
+        marketAnalysis.find(
+            (m) =>
+                (m.transportCostTotal || 0) === 0 ||
+                m.transportCostPerKg === 0 ||
+                (batch?.currentLocation && m.location && m.location.toLowerCase() === batch.currentLocation.toLowerCase())
+        ) || marketAnalysis[0]
+    );
+};
+
 // ── Rule functions ────────────────────────────────────────────────────────────
 
 const ruleUrgentSell = (prediction) => {
@@ -60,11 +74,11 @@ const ruleDiscount = (prediction) => {
     return null;
 };
 
-const ruleMoveToMarket = (prediction, profitAnalysis) => {
+const ruleMoveToMarket = (prediction, profitAnalysis, batch) => {
     if (!profitAnalysis) return null;
 
     const { marketAnalysis, bestMarket } = profitAnalysis;
-    if (!bestMarket || marketAnalysis.length < 2) return null;
+    if (!bestMarket || !marketAnalysis || marketAnalysis.length < 2) return null;
 
     // Need at least 2 feasible markets to compare
     const feasibleMarkets = marketAnalysis.filter(
@@ -72,19 +86,23 @@ const ruleMoveToMarket = (prediction, profitAnalysis) => {
     );
     if (feasibleMarkets.length < 2) return null;
 
-    // Sort by profit
+    // Sort by profit descending
     feasibleMarkets.sort((a, b) => b.expectedProfit - a.expectedProfit);
     const best = feasibleMarkets[0];
     const secondBest = feasibleMarkets[1];
 
     // Only recommend a move if the profit improvement is meaningful
-    const improvementRatio =
-        secondBest.expectedProfit !== 0
-            ? best.expectedProfit / secondBest.expectedProfit
-            : 2;
+    let isProfitableMove = false;
+    if (secondBest.expectedProfit > 0) {
+        const improvementRatio = best.expectedProfit / secondBest.expectedProfit;
+        isProfitableMove = improvementRatio >= THRESHOLDS.PROFITABLE_MOVE_THRESHOLD;
+    } else {
+        // If secondBest is zero or negative, any positive profit is clearly better
+        isProfitableMove = best.expectedProfit > secondBest.expectedProfit && best.expectedProfit > 0;
+    }
 
     if (
-        improvementRatio >= THRESHOLDS.PROFITABLE_MOVE_THRESHOLD &&
+        isProfitableMove &&
         prediction.shelfLifeDays > 1 // enough shelf life to make the journey
     ) {
         return {
@@ -101,11 +119,9 @@ const ruleMoveToMarket = (prediction, profitAnalysis) => {
     return null;
 };
 
-const ruleSellLocal = (prediction, profitAnalysis) => {
+const ruleSellLocal = (prediction, profitAnalysis, batch) => {
     if (prediction.shelfLifeDays <= THRESHOLDS.LOW_SHELF_LIFE_DAYS) {
-        const localMarket = profitAnalysis?.marketAnalysis?.find(
-            (m) => (m.transportCostTotal || 0) === 0 || m.transportCostPerKg === 0
-        );
+        const localMarket = findLocalMarket(profitAnalysis?.marketAnalysis, batch);
         return {
             actionType: "SELL_LOCAL",
             urgencyLevel: prediction.shelfLifeDays < 1 ? "HIGH" : "MEDIUM",
@@ -132,8 +148,8 @@ const ruleHold = (prediction) => {
     return null;
 };
 
-const ruleDefaultSellLocal = (prediction, profitAnalysis) => {
-    const localMarket = profitAnalysis?.marketAnalysis?.[profitAnalysis.marketAnalysis.length - 1];
+const ruleDefaultSellLocal = (prediction, profitAnalysis, batch) => {
+    const localMarket = findLocalMarket(profitAnalysis?.marketAnalysis, batch);
     return {
         actionType: "SELL_LOCAL",
         urgencyLevel: prediction.spoilageProbability >= THRESHOLDS.MEDIUM_SPOILAGE_RISK ? "MEDIUM" : "LOW",
@@ -167,10 +183,10 @@ export const generateRecommendation = async (batchId) => {
     const decision =
         ruleUrgentSell(prediction) ||
         ruleDiscount(prediction) ||
-        ruleMoveToMarket(prediction, profitAnalysis) ||
-        ruleSellLocal(prediction, profitAnalysis) ||
+        ruleMoveToMarket(prediction, profitAnalysis, batch) ||
+        ruleSellLocal(prediction, profitAnalysis, batch) ||
         ruleHold(prediction) ||
-        ruleDefaultSellLocal(prediction, profitAnalysis);
+        ruleDefaultSellLocal(prediction, profitAnalysis, batch);
 
     const recommendation = await Recommendation.create({
         batchId,
@@ -225,4 +241,15 @@ export const getRecommendationHistory = async (batchId, limit = 10) => {
     return Recommendation.find({ batchId })
         .sort({ createdAt: -1 })
         .limit(limit);
+};
+
+/**
+ * Get all latest recommendations across batches.
+ */
+export const getAllRecommendations = async (limit = 50) => {
+    return Recommendation.find()
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .populate("batchId", "batchCode produceType quantity stage status currentLocation")
+        .populate("predictionId", "freshnessScore shelfLifeDays spoilageProbability riskLevel");
 };

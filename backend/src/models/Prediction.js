@@ -35,8 +35,8 @@ const predictionSchema = new mongoose.Schema(
         shelfLifeDays: {
             // Estimated commercially useful days remaining.
             type: Number,
-            required: true,
             min: 0,
+            default: null,
         },
 
         spoilageProbability: {

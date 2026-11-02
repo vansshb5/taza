@@ -1,4 +1,9 @@
 import Batch from "../models/Batch.js";
+import QualityInspection from "../models/QualityInspection.js";
+import Prediction from "../models/Prediction.js";
+import ProfitAnalysis from "../models/ProfitAnalysis.js";
+import Recommendation from "../models/Recommendation.js";
+import MarketDemand from "../models/MarketDemand.js";
 import logger from "../utils/logger.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -34,18 +39,22 @@ export const getAllBatches = async (filters = {}, options = {}) => {
 
     if (filters.produceType) query.produceType = filters.produceType.toLowerCase();
     if (filters.status) query.status = filters.status.toUpperCase();
-    if (filters.currentLocation)
+    if (filters.currentLocation) {
         query.currentLocation = { $regex: filters.currentLocation, $options: "i" };
+    }
 
-    const page = Math.max(parseInt(options.page) || 1, 1);
-    const limit = Math.min(parseInt(options.limit) || 20, 100);
+    const page = Math.max(1, parseInt(options.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(options.limit) || 20));
     const skip = (page - 1) * limit;
 
-    const sortField = options.sortBy || "createdAt";
+    const sortBy = options.sortBy || "createdAt";
     const sortOrder = options.sortOrder === "asc" ? 1 : -1;
 
     const [batches, total] = await Promise.all([
-        Batch.find(query).sort({ [sortField]: sortOrder }).skip(skip).limit(limit),
+        Batch.find(query)
+            .sort({ [sortBy]: sortOrder })
+            .skip(skip)
+            .limit(limit),
         Batch.countDocuments(query),
     ]);
 
@@ -80,7 +89,19 @@ export const updateBatch = async (batchId, updateData) => {
 };
 
 export const deleteBatch = async (batchId) => {
-    return Batch.findByIdAndDelete(batchId);
+    const deletedBatch = await Batch.findByIdAndDelete(batchId);
+    if (deletedBatch) {
+        // Cascading delete across all batch-dependent collections
+        await Promise.allSettled([
+            QualityInspection.deleteMany({ batchId }),
+            Prediction.deleteMany({ batchId }),
+            ProfitAnalysis.deleteMany({ batchId }),
+            Recommendation.deleteMany({ batchId }),
+            MarketDemand.deleteMany({ batchId }),
+        ]);
+        logger.info("Batch and associated child records deleted", { batchId });
+    }
+    return deletedBatch;
 };
 
 /**

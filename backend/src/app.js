@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 
 // Routes
+import authRoutes from "./routes/auth.routes.js";
 import batchRoutes from "./routes/batch.routes.js";
 import qualityInspectionRoutes from "./routes/qualityInspection.routes.js";
 import analysisRoutes from "./routes/analysis.routes.js";
@@ -33,6 +34,8 @@ app.get("/api/health", (req, res) => {
 });
 
 // ── API routes ───────────────────────────────────────────────────────────────
+app.use("/api/auth", authRoutes);
+app.use("/auth", authRoutes);
 app.use("/api/batches", batchRoutes);
 app.use("/api/batches", qualityInspectionRoutes); // nested: /api/batches/:batchId/inspections
 app.use("/api/batches", analysisRoutes); // nested: /api/batches/:batchId/analyze[/insights]

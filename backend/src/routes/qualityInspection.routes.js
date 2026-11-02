@@ -6,8 +6,11 @@ import {
     deleteInspectionController,
 } from "../controllers/qualityInspection.controller.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { resolveBatchParam } from "../middleware/resolveBatch.middleware.js";
 
 const router = express.Router({ mergeParams: true });
+
+router.param("batchId", resolveBatchParam);
 
 // POST   /api/batches/:batchId/inspections
 // GET    /api/batches/:batchId/inspections

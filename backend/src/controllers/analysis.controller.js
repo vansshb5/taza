@@ -19,17 +19,18 @@
  *   storageType           → storageType
  *   storageLocation       → storageLocation  (informational, not forwarded to Python)
  */
-import { getBatchById } from "../services/batch.service.js";
-import { updateBatchPredictionCache } from "../services/batch.service.js";
+import { getBatchById, updateBatchPredictionCache } from "../services/batch.service.js";
 import { analyzeBatch, getAgentInsights, MLServiceError } from "../services/mlProxy.service.js";
 import Prediction from "../models/Prediction.js";
+import QualityInspection from "../models/QualityInspection.js";
+import Recommendation from "../models/Recommendation.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import logger from "../utils/logger.js";
 
 const parseJSONField = (raw, fallback) => {
     if (!raw) return fallback;
     try {
-        return JSON.parse(raw);
+        return typeof raw === "string" ? JSON.parse(raw) : raw;
     } catch {
         return fallback;
     }
@@ -75,10 +76,6 @@ export const analyzeBatchController = async (req, res, next) => {
         if (!batch) return sendError(res, 404, "Batch not found");
 
         if (!req.files || req.files.length === 0) {
-            // Log what Express actually received before rejecting, so this
-            // is diagnosable from server logs alone next time — previously
-            // this branch returned silently with no log line, which is why
-            // this failure looked identical to an AI-service-side rejection.
             logger.warn("[EXPRESS] no images in request — rejecting", {
                 batchId,
                 contentType: req.headers["content-type"],
@@ -130,20 +127,57 @@ export const analyzeBatchController = async (req, res, next) => {
 
         const { cv_analysis: cv, shelf_life: shelfLife, decision } = result;
 
+        const estimatedDays = shelfLife?.assessment?.estimated_remaining_shelf_life_days;
+        const shelfLifeDays = estimatedDays !== undefined ? estimatedDays : null;
+
+        // 1. Create a QualityInspection record for the image inspection
+        let inspection = null;
+        try {
+            const uploadedPhotoPaths = req.files && Array.isArray(req.files)
+                ? req.files.map((f) => f.path || f.filename).filter(Boolean)
+                : [];
+
+            inspection = await QualityInspection.create({
+                batchId: batch._id,
+                inspectionType: "IMAGE",
+                visualQuality: {
+                    score: cv.freshness_score,
+                    color: cv.visual_class,
+                    visibleDefects: cv.visual_class?.toLowerCase().includes("rotten") ? [cv.visual_class] : [],
+                },
+                physicalQuality: {
+                    firmness: null,
+                    surfaceCondition: cv.visual_class,
+                },
+                environmentalData: {
+                    temperature: storage.temperatureC ?? null,
+                    humidity: storage.humidityPercent ?? null,
+                },
+                imageUrl: uploadedPhotoPaths[0] || null,
+                notes: `AI Vision classified as ${cv.visual_class} (freshness score: ${cv.freshness_score}/100, confidence: ${Math.round((cv.confidence || 0) * 100)}%)`,
+            });
+        } catch (qiError) {
+            logger.warn("Failed to create QualityInspection for AI analysis:", qiError.message);
+        }
+
+        // 2. Create the Prediction record
+        const spoilageProbability =
+            shelfLife?.assessment?.spoilage_risk === "HIGH"
+                ? 0.8
+                : shelfLife?.assessment?.spoilage_risk === "MEDIUM"
+                ? 0.5
+                : shelfLife?.assessment?.spoilage_risk === "LOW"
+                ? 0.15
+                : 0.5;
+
         const prediction = await Prediction.create({
             batchId: batch._id,
+            inspectionId: inspection?._id || null,
             freshnessScore: cv.freshness_score,
-            shelfLifeDays: shelfLife.assessment.estimated_remaining_shelf_life_days ?? 0,
-            spoilageProbability:
-                shelfLife.assessment.spoilage_risk === "HIGH"
-                    ? 0.8
-                    : shelfLife.assessment.spoilage_risk === "MEDIUM"
-                    ? 0.5
-                    : shelfLife.assessment.spoilage_risk === "LOW"
-                    ? 0.15
-                    : 0.5,
+            shelfLifeDays,
+            spoilageProbability,
             riskLevel: riskLevelFromDecision(shelfLife),
-            confidence: shelfLife.assessment.confidence,
+            confidence: shelfLife?.assessment?.confidence ?? cv.confidence,
             source: "ml_python_service",
             visualClass: cv.visual_class,
             classDistribution: cv.class_distribution,
@@ -159,16 +193,59 @@ export const analyzeBatchController = async (req, res, next) => {
             },
         });
 
+        // 3. Create Recommendation record if decision recommendation is present
+        try {
+            const primaryAction = decision?.recommendation?.primary_action || "HOLD";
+            const urgency = decision?.recommendation?.urgency || "LOW";
+            const reason =
+                decision?.reasoning ||
+                `AI recommendation: ${primaryAction} based on visual freshness and shelf life assessment.`;
+
+            let actionType = "HOLD";
+            const actionUpper = primaryAction.toUpperCase();
+            if (actionUpper.includes("SELL_LOCAL") || actionUpper.includes("LOCAL")) actionType = "SELL_LOCAL";
+            else if (actionUpper.includes("MOVE") || actionUpper.includes("TRANSPORT")) actionType = "MOVE_TO_MARKET";
+            else if (actionUpper.includes("DISCOUNT")) actionType = "DISCOUNT";
+            else if (actionUpper.includes("PROCESS")) actionType = "PROCESS";
+            else if (actionUpper.includes("REDIRECT")) actionType = "REDIRECT";
+            else if (actionUpper.includes("URGENT")) actionType = "URGENT_SELL";
+
+            let urgencyLevel = "LOW";
+            const urgUpper = urgency.toUpperCase();
+            if (urgUpper.includes("CRIT")) urgencyLevel = "CRITICAL";
+            else if (urgUpper.includes("HIGH")) urgencyLevel = "HIGH";
+            else if (urgUpper.includes("MED")) urgencyLevel = "MEDIUM";
+
+            await Recommendation.create({
+                batchId: batch._id,
+                predictionId: prediction._id,
+                actionType,
+                urgencyLevel,
+                reason,
+                targetMarket: decision?.allocations?.[0]?.market || null,
+                reasonFactors: {
+                    shelfLifeDays: prediction.shelfLifeDays,
+                    spoilageProbability: prediction.spoilageProbability,
+                    freshnessScore: prediction.freshnessScore,
+                    riskLevel: prediction.riskLevel,
+                },
+                confidence: prediction.confidence,
+            });
+        } catch (recError) {
+            logger.warn("Failed to create Recommendation for AI analysis:", recError.message);
+        }
+
+        // 4. Update Batch prediction cache
         await updateBatchPredictionCache(batchId, {
             freshnessScore: cv.freshness_score,
-            shelfLifeDays: shelfLife.assessment.estimated_remaining_shelf_life_days ?? 0,
+            shelfLifeDays: shelfLifeDays ?? 0,
             spoilageProbability: prediction.spoilageProbability,
         });
 
         logger.info("[EXPRESS] response sent", {
             batchId,
             visualClass: cv.visual_class,
-            primaryAction: decision.recommendation?.primary_action,
+            primaryAction: decision?.recommendation?.primary_action,
         });
 
         return sendSuccess(res, 201, prediction, "Batch analyzed successfully");
@@ -182,10 +259,11 @@ export const analyzeBatchController = async (req, res, next) => {
 
 /**
  * POST /api/batches/:batchId/analyze/insights
+ * GET  /api/predictions/:batchId/insights
+ *
  * Optional "✨ Get AI Insights" step. Uses the most recent
- * ml_python_service prediction's shelf-life assessment to request an
- * LLM explanation of the decision, without re-running CV or the
- * deterministic engine's numbers.
+ * prediction's shelf-life assessment to request an LLM explanation
+ * of the decision, without re-running CV or the deterministic engine's numbers.
  */
 export const getBatchInsightsController = async (req, res, next) => {
     try {
@@ -193,14 +271,34 @@ export const getBatchInsightsController = async (req, res, next) => {
         const batch = await getBatchById(batchId);
         if (!batch) return sendError(res, 404, "Batch not found");
 
-        const latest = await Prediction.findOne({ batchId, source: "ml_python_service" }).sort({
+        let latest = await Prediction.findOne({ batchId, source: "ml_python_service" }).sort({
             createdAt: -1,
         });
-        if (!latest || !latest.shelfLifeAssessment) {
+
+        if (!latest) {
+            latest = await Prediction.findOne({ batchId }).sort({ createdAt: -1 });
+        }
+
+        if (!latest) {
             return sendError(
                 res,
                 422,
-                "No AI analysis on file for this batch yet. Run Analyze Batch first."
+                "No analysis on file for this batch yet. Run Analyze Batch first."
+            );
+        }
+
+        // If insights were already computed and no new inputs requested, return them directly
+        if (req.method === "GET" && latest.aiInsights?.explanation && !req.query.refresh) {
+            return sendSuccess(
+                res,
+                200,
+                {
+                    agent_explanation: latest.aiInsights.explanation,
+                    agent_notes: latest.aiInsights.notes,
+                    agent_provider: latest.aiInsights.provider,
+                    agent_model: latest.aiInsights.model,
+                },
+                "AI insights retrieved"
             );
         }
 
@@ -208,11 +306,21 @@ export const getBatchInsightsController = async (req, res, next) => {
         const routes = parseJSONField(req.body?.routes, []);
         const localMarket = parseJSONField(req.body?.localMarket, null);
 
+        const shelfLifeAssessment = latest.shelfLifeAssessment || {
+            assessment: {
+                estimated_remaining_shelf_life_days: latest.shelfLifeDays ?? 3,
+                confidence: latest.confidence ?? 0.5,
+                spoilage_risk: latest.riskLevel || "MEDIUM",
+            },
+            factors: {},
+            reasoning: "Heuristic prediction baseline",
+        };
+
         const insights = await getAgentInsights({
             batchId: batch._id.toString(),
             produce: batch.produceType,
             quantityKg: batch.quantity,
-            shelfLifeAssessment: latest.shelfLifeAssessment,
+            shelfLifeAssessment,
             markets,
             routes,
             localMarket,

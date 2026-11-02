@@ -292,7 +292,7 @@ export const computeExpectedProfitLoss = ({
 
     const expectedProfit =
         procurementCost !== null
-            ? grossRevenue - knownCosts - spoilageLoss
+            ? grossRevenue - knownCosts
             : null; // cannot compute profit without procurement cost
 
     const wastePercent = Math.round((spoiledQuantity / quantity) * 100 * 10) / 10;
