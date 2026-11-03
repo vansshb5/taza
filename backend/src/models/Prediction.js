@@ -41,8 +41,9 @@ const predictionSchema = new mongoose.Schema(
 
         spoilageProbability: {
             // 0–1. Probability that the batch has meaningful spoilage.
+            // null when the source only has an UNKNOWN risk category.
             type: Number,
-            required: true,
+            default: null,
             min: 0,
             max: 1,
         },
@@ -50,7 +51,7 @@ const predictionSchema = new mongoose.Schema(
         riskLevel: {
             // Derived from spoilageProbability for human display.
             type: String,
-            enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN"],
             required: true,
         },
 
@@ -78,6 +79,9 @@ const predictionSchema = new mongoose.Schema(
             humidity: { type: Number, default: null },
             daysSinceHarvest: { type: Number, default: null },
             storageDays: { type: Number, default: null },
+            transportDurationHours: { type: Number, default: null },
+            storageType: { type: String, default: null },
+            storageLocation: { type: String, default: null },
             visibleDefects: { type: [String], default: [] },
             brix: { type: Number, default: null },
         },

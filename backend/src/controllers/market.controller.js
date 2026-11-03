@@ -5,7 +5,7 @@ import {
     computeMarketOpportunities,
 } from "../services/market.service.js";
 import { getBatchById } from "../services/batch.service.js";
-import { getLatestPrediction } from "../services/prediction.service.js";
+import { getPreferredPrediction } from "../services/prediction.service.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 
 /**
@@ -72,7 +72,7 @@ export const getMarketOpportunitiesController = async (req, res, next) => {
         const batch = await getBatchById(req.params.batchId);
         if (!batch) return sendError(res, 404, "Batch not found");
 
-        const prediction = await getLatestPrediction(req.params.batchId);
+        const prediction = await getPreferredPrediction(req.params.batchId);
         if (!prediction)
             return sendError(
                 res,

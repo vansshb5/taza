@@ -1,15 +1,21 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { getApiErrorMessage } from "../api/client";
 import { analyzeBatchImages, getBatchAiInsights } from "../api/predictions";
 
 export function usePrediction() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // Ref guard: state updates are async, so a fast double-click could otherwise
+  // start two analyses (and create duplicate records) before `loading` is true.
+  const inFlight = useRef(false);
   const [insights, setInsights] = useState(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState(null);
 
   async function runInspection(batchId, files, storage) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -18,8 +24,9 @@ export function usePrediction() {
       const data = await analyzeBatchImages(batchId, files, storage);
       setResult(data);
     } catch (err) {
-      setError(err);
+      setError(new Error(getApiErrorMessage(err, "The AI analysis could not be completed.")));
     } finally {
+      inFlight.current = false;
       setLoading(false);
     }
   }
@@ -31,7 +38,7 @@ export function usePrediction() {
       const data = await getBatchAiInsights(batchId);
       setInsights(data);
     } catch (err) {
-      setInsightsError(err);
+      setInsightsError(new Error(getApiErrorMessage(err, "Could not load AI insights.")));
     } finally {
       setInsightsLoading(false);
     }

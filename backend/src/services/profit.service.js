@@ -8,7 +8,7 @@
 
 import ProfitAnalysis from "../models/ProfitAnalysis.js";
 import { getBatchById } from "./batch.service.js";
-import { getLatestPrediction } from "./prediction.service.js";
+import { getPreferredPrediction } from "./prediction.service.js";
 import { getMarketPrices, computeMarketOpportunities } from "./market.service.js";
 import { computeExpectedProfitLoss } from "../utils/calculations.js";
 import { getDaysSinceDate } from "./shelfLife.service.js";
@@ -26,7 +26,7 @@ export const runProfitAnalysis = async (batchId, overrides = {}, transportConfig
     const batch = await getBatchById(batchId);
     if (!batch) throw Object.assign(new Error("Batch not found"), { statusCode: 404 });
 
-    const prediction = await getLatestPrediction(batchId);
+    const prediction = await getPreferredPrediction(batchId);
     if (!prediction)
         throw Object.assign(
             new Error("No prediction found. Run POST /api/predictions/:batchId/run first."),

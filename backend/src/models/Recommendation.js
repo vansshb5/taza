@@ -61,7 +61,7 @@ const recommendationSchema = new mongoose.Schema(
         urgencyLevel: {
             // Drives display priority in the dashboard
             type: String,
-            enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+            enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN"],
             required: true,
         },
 

@@ -9,7 +9,6 @@ import {
   Droplets,
   Image as ImageIcon,
   IndianRupee,
-  Leaf,
   MapPin,
   Package,
   Plus,
@@ -131,12 +130,18 @@ function getQueryBatchId(search) {
   return new URLSearchParams(search).get("batch");
 }
 
-function calculateDaysSinceHarvest(harvestDate) {
-  if (!harvestDate) return "";
-  const harvest = new Date(harvestDate);
-  if (Number.isNaN(harvest.getTime())) return "";
-  const diff = new Date().getTime() - harvest.getTime();
-  return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
+// "freshapples" -> "Fresh apples", "rottenbanana" -> "Rotten banana"
+function formatVisualClass(cls) {
+  if (!cls) return "—";
+  const m = String(cls).match(/^(fresh|rotten)_?(.*)$/i);
+  if (!m) return String(cls).replace(/_/g, " ");
+  const state = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+  return m[2] ? `${state} ${m[2].replace(/_/g, " ")}` : state;
+}
+
+function formatPercent01(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${Math.round(Number(value) * 100)}%`;
 }
 
 function formatNumber(value, decimals = 0) {
@@ -758,11 +763,48 @@ function PredictionResult({ result, onAnalyzeAgain, recomputed = false }) {
   return (
     <div className="space-y-5">
 
+      {/* ── VISUAL INSPECTION ───────────────────────────────── */}
+      <Card>
+        <CardHeader
+          title="Visual inspection"
+          subtitle="Computer-vision freshness classification of the uploaded images"
+        />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="rounded-xl border border-border p-4">
+            <p className="text-xs text-muted">Detected class</p>
+            <p className="text-base font-semibold text-ink mt-1">
+              {formatVisualClass(result.visualClass)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-border p-4">
+            <p className="text-xs text-muted">Freshness score</p>
+            <p className="text-base font-semibold font-mono text-ink mt-1">
+              {result.freshness != null ? `${Math.round(Number(result.freshness))}/100` : "—"}
+            </p>
+          </div>
+          <div className="rounded-xl border border-border p-4">
+            <p className="text-xs text-muted">Model confidence</p>
+            <p className="text-base font-semibold font-mono text-ink mt-1">
+              {formatPercent01(result.cvConfidence)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-border p-4">
+            <p className="text-xs text-muted">Batch condition</p>
+            <p className="text-base font-semibold text-ink mt-1">
+              {conditionLabel && conditionLabel !== result.visualClass
+                ? conditionLabel
+                : result.batchCondition || "—"}
+            </p>
+          </div>
+        </div>
+      </Card>
+
+
       {/* ── PRIMARY METRICS ─────────────────────────────────── */}
       <Card>
         <CardHeader
-          title="AI analysis result"
-          subtitle="Freshness, shelf life and spoilage risk from the ML pipeline"
+          title="Shelf-life assessment"
+          subtitle="RAG-grounded shelf-life estimate and spoilage risk"
         />
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -799,16 +841,16 @@ function PredictionResult({ result, onAnalyzeAgain, recomputed = false }) {
           {/* Shelf life */}
           <StatTile
             label="Remaining shelf life"
-            value={result.shelfLifeDays ?? "—"}
+            value={result.shelfLifeDays != null ? formatNumber(result.shelfLifeDays, 1) : "—"}
             suffix="days"
             subtext={
-              result.shelfLifeRange
-                ? `Range: ${Array.isArray(result.shelfLifeRange)
-                  ? `${result.shelfLifeRange[0]}–${result.shelfLifeRange[1]} days`
-                  : result.shelfLifeRange}`
-                : shelfLifeAssessment?.assessment?.estimate_range_days
-                  ? `Range: ${shelfLifeAssessment.assessment.estimate_range_days[0]}–${shelfLifeAssessment.assessment.estimate_range_days[1]} days`
-                  : null
+              result.shelfLifeDays == null
+                ? "Not estimated — the AI had insufficient data"
+                : result.shelfLifeRange && typeof result.shelfLifeRange === "object"
+                  ? `Range: ${result.shelfLifeRange.min}–${result.shelfLifeRange.max} days`
+                  : result.shelfLifeRange
+                    ? `Range: ${result.shelfLifeRange}`
+                    : null
             }
           />
 
@@ -822,7 +864,11 @@ function PredictionResult({ result, onAnalyzeAgain, recomputed = false }) {
               </span>
             </div>
             <p className="text-4xl font-semibold font-mono text-ink mt-2">
-              {risk != null ? `${Math.round(Number(risk))}%` : "—"}
+              {risk != null
+                ? `${Math.round(Number(risk))}%`
+                : riskLevel && riskLevel !== "UNKNOWN"
+                  ? riskLevel
+                  : "Unknown"}
             </p>
             {urgency && (
               <div className="mt-3">
@@ -835,19 +881,71 @@ function PredictionResult({ result, onAnalyzeAgain, recomputed = false }) {
 
         </div>
 
-        {/* Confidence */}
-        {result.confidence != null && (
-          <div className="mt-4 rounded-lg border border-border px-4 py-3 flex items-center justify-between">
-            <span className="text-xs text-muted">Model confidence</span>
+        {/* Assessment details */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="rounded-lg border border-border px-4 py-3 flex items-center justify-between">
+            <span className="text-xs text-muted">Shelf-life confidence</span>
             <span className="text-sm font-mono font-semibold text-ink">
-              {typeof result.confidence === "number"
-                ? `${Math.round(
-                  result.confidence <= 1
-                    ? result.confidence * 100
-                    : result.confidence
-                )}%`
-                : result.confidence}
+              {formatPercent01(result.confidence)}
             </span>
+          </div>
+          <div className="rounded-lg border border-border px-4 py-3 flex items-center justify-between">
+            <span className="text-xs text-muted">Data quality</span>
+            <span className="text-sm font-semibold text-ink">
+              {result.dataQuality || "—"}
+            </span>
+          </div>
+        </div>
+
+        {result.dataQuality === "INSUFFICIENT" && (
+          <div className="mt-3 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+            The AI had insufficient data for a reliable shelf-life estimate. Add
+            storage conditions and re-run the analysis for a better result.
+          </div>
+        )}
+
+        {Array.isArray(result.factors) && result.factors.length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs font-medium text-muted mb-2">Contributing factors</p>
+            <div className="space-y-2">
+              {result.factors.map((f, i) => (
+                <div key={i} className="rounded-lg border border-border px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-ink capitalize">
+                      {String(f.factor || "").replace(/_/g, " ")}
+                    </p>
+                    {f.impact && (
+                      <span
+                        className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                          f.impact === "negative"
+                            ? "bg-red-100 text-red-700"
+                            : f.impact === "positive"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-gray-100 text-muted"
+                        }`}
+                      >
+                        {f.impact}
+                      </span>
+                    )}
+                  </div>
+                  {f.reason && (
+                    <p className="text-xs text-muted mt-1 leading-5">{f.reason}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {Array.isArray(result.missingInformation) && result.missingInformation.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {result.missingInformation.map((m, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs text-muted bg-bg border border-border rounded-lg px-3 py-2">
+                <ScanLine size={12} className="shrink-0 mt-0.5" />
+                Missing: {m}
+              </div>
+            ))}
           </div>
         )}
       </Card>
@@ -898,14 +996,6 @@ function PredictionResult({ result, onAnalyzeAgain, recomputed = false }) {
                 </div>
               </div>
             </motion.div>
-          )}
-
-          {/* Condition */}
-          {conditionLabel && (
-            <div className="rounded-xl bg-bg p-4 mb-4">
-              <p className="text-xs font-medium text-muted">Batch condition</p>
-              <p className="text-base font-semibold text-ink mt-1">{conditionLabel}</p>
-            </div>
           )}
 
           {/* Reasoning */}
@@ -1183,7 +1273,6 @@ export default function InspectProduce() {
   const [storageType, setStorageType] = useState("");
   const [storageLocation, setStorageLocation] = useState("");
   const [transportDurationHours, setTransportDurationHours] = useState("");
-  const [daysSinceHarvest, setDaysSinceHarvest] = useState("");
 
   // Markets & routes — real, user-entered market demand + route data
   const marketData = useMarketData(selectedBatchId || null);
@@ -1197,15 +1286,6 @@ export default function InspectProduce() {
     () => batches.find((b) => String(b.id) === String(selectedBatchId)) || null,
     [batches, selectedBatchId]
   );
-
-  useEffect(() => {
-    if (!selectedBatch) {
-      setDaysSinceHarvest("");
-      return;
-    }
-    const days = calculateDaysSinceHarvest(selectedBatch.harvestDate);
-    setDaysSinceHarvest(days === "" ? "" : String(days));
-  }, [selectedBatch]);
 
   // Load any previously saved market/route data for the selected batch
   useEffect(() => {
@@ -1251,11 +1331,6 @@ export default function InspectProduce() {
   function handleBatchChange(batchId) {
     setSelectedBatchId(batchId);
     reset();
-    const batch = batches.find((b) => String(b.id) === String(batchId));
-    if (batch) {
-      const days = calculateDaysSinceHarvest(batch.harvestDate);
-      setDaysSinceHarvest(days === "" ? "" : String(days));
-    }
     navigate(batchId ? `/analyze?batch=${batchId}` : "/analyze", {
       replace: true,
     });
@@ -1273,10 +1348,9 @@ export default function InspectProduce() {
     // IMPORTANT: Field names must match what the backend
     // analysis.controller.js reads.
     //
-    // The controller now accepts BOTH the canonical names
-    // (temperatureC, humidityPercent, harvestAgeDays) AND the
-    // frontend aliases (temperature, humidity, daysSinceHarvest).
-    // We send the frontend aliases here — the controller resolves them.
+    // The controller accepts the frontend aliases (temperature, humidity)
+    // and the canonical names. Harvest age is NOT sent: the backend derives
+    // it from the batch's stored harvestDate at analysis time.
     // --------------------------------------------------------
     const input = {
       temperature: temperature === "" ? undefined : Number(temperature),
@@ -1285,8 +1359,6 @@ export default function InspectProduce() {
       storageLocation: storageLocation || undefined,
       transportDurationHours:
         transportDurationHours === "" ? undefined : Number(transportDurationHours),
-      daysSinceHarvest:
-        daysSinceHarvest === "" ? undefined : Number(daysSinceHarvest),
       // Real, user-entered market/route data — only sent if the person
       // actually filled in at least one complete market/route. The
       // backend (analysis.controller.js) forwards these as-is to the
@@ -1352,10 +1424,6 @@ export default function InspectProduce() {
     setStorageType("");
     setStorageLocation("");
     setTransportDurationHours("");
-    if (selectedBatch) {
-      const days = calculateDaysSinceHarvest(selectedBatch.harvestDate);
-      setDaysSinceHarvest(days === "" ? "" : String(days));
-    }
   }
 
   // ==========================================================
@@ -1593,17 +1661,6 @@ export default function InspectProduce() {
               placeholder="e.g. Cold room A"
             />
 
-            <Field
-              label="Days since harvest"
-              icon={Leaf}
-              value={daysSinceHarvest}
-              onChange={setDaysSinceHarvest}
-              type="number"
-              placeholder="Auto-filled from batch"
-              suffix="days"
-              min="0"
-            />
-
           </div>
 
           {selectedBatch?.harvestDate && (
@@ -1613,8 +1670,8 @@ export default function InspectProduce() {
                 {selectedBatch.harvestDate}
               </p>
               <p className="text-[11px] text-muted mt-2">
-                Days since harvest is auto-calculated from this date. You can
-                adjust it if the recorded date differs.
+                Harvest age is calculated by the server from this date when the
+                analysis runs. To change it, edit the batch's harvest date.
               </p>
             </div>
           )}

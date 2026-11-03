@@ -2,6 +2,7 @@ import {
     runBatchPrediction,
     getPredictionHistory,
     getLatestPrediction,
+    getPreferredPrediction,
 } from "../services/prediction.service.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 
@@ -19,12 +20,24 @@ export const runPredictionController = async (req, res, next) => {
 };
 
 /**
- * GET /api/predictions/:batchId
- * Get the latest prediction for a batch.
+ * GET /api/predictions/:batchId[?source=ml|heuristic|any]
+ * Get the latest prediction for a batch (ML preferred by default).
  */
 export const getLatestPredictionController = async (req, res, next) => {
     try {
-        const prediction = await getLatestPrediction(req.params.batchId);
+        // ?source=ml | heuristic | any. Default: latest ML analysis, falling
+        // back to a heuristic estimate only when no ML analysis exists.
+        const sourceParam = req.query.source;
+        const SOURCES = { ml: "ml_python_service", heuristic: "heuristic_mock" };
+        if (sourceParam && sourceParam !== "any" && !SOURCES[sourceParam]) {
+            return sendError(res, 400, "Invalid 'source'. Use ml, heuristic or any.");
+        }
+        const prediction =
+            sourceParam === "any"
+                ? await getLatestPrediction(req.params.batchId)
+                : SOURCES[sourceParam]
+                  ? await getLatestPrediction(req.params.batchId, SOURCES[sourceParam])
+                  : await getPreferredPrediction(req.params.batchId);
         if (!prediction)
             return sendError(
                 res,

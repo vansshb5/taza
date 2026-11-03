@@ -55,13 +55,32 @@ function normalizePrediction(data) {
     data;
 
 
-  const spoilageRisk =
-    prediction.spoilageRisk ??
-    prediction.spoilage_risk ??
-    normalizePercentage(
-      prediction.spoilageProbability ??
-      prediction.spoilage_probability
-    );
+  const isMlResult =
+    (prediction.source ?? prediction.model) === "ml_python_service";
+
+  // The AI service reports spoilage risk only as a LOW/MEDIUM/HIGH category.
+  // The backend stores a coarse category-derived proxy probability for
+  // downstream maths; it is NOT a measured percentage, so for ML results the
+  // numeric spoilageRisk stays null and the UI shows riskLevel instead.
+  const spoilageRisk = isMlResult
+    ? null
+    : prediction.spoilageRisk ??
+      prediction.spoilage_risk ??
+      normalizePercentage(
+        prediction.spoilageProbability ??
+        prediction.spoilage_probability
+      );
+
+
+  // Real AI payloads (Layer 2 shelf-life assessment).
+  const sla =
+    prediction.shelfLifeAssessment ??
+    prediction.shelf_life_assessment ??
+    null;
+  const slaAssessment = sla?.assessment ?? null;
+  const rangeDays = Array.isArray(slaAssessment?.estimate_range_days)
+    ? slaAssessment.estimate_range_days
+    : null;
 
 
   // The backend stores the full DecisionResult (recommendation, allocations,
@@ -129,7 +148,9 @@ function normalizePrediction(data) {
     shelfLifeRange:
       prediction.shelfLifeRange ??
       prediction.shelf_life_range ??
-      null,
+      (rangeDays && rangeDays.length === 2
+        ? { min: rangeDays[0], max: rangeDays[1] }
+        : null),
 
 
     // --------------------------------------------------------
@@ -175,11 +196,21 @@ function normalizePrediction(data) {
     batchCondition:
       prediction.batchCondition ??
       prediction.batch_condition ??
+      sla?.condition?.batch_condition ??
       null,
+
+    // Visual inspection details from the saved assessment
+    produce: sla?.produce ?? null,
+    cvConfidence: sla?.condition?.cv_confidence ?? null,
+    dataQuality: sla?.data_quality ?? null,
+    missingInformation: Array.isArray(sla?.missing_information)
+      ? sla.missing_information
+      : [],
 
     urgency:
       prediction.urgency ??
       prediction.priority ??
+      slaAssessment?.urgency ??
       null,
 
 
@@ -189,6 +220,7 @@ function normalizePrediction(data) {
 
     reasoning:
       prediction.reasoning ??
+      sla?.reasoning_summary ??
       prediction.explanation ??
       prediction.explanationText ??
       prediction.explanation_text ??
@@ -246,6 +278,7 @@ function normalizePrediction(data) {
       prediction.impact ??
       prediction.estimatedImpact ??
       prediction.estimated_impact ??
+      decision?.impact ??
       null,
 
 
@@ -254,7 +287,13 @@ function normalizePrediction(data) {
     // --------------------------------------------------------
 
     factors:
-      Array.isArray(
+      Array.isArray(sla?.factors) && sla.factors.length > 0
+        ? sla.factors.map((f) => ({
+            ...f,
+            // UI renders `reason`; the AI service calls it `explanation`.
+            reason: f.reason ?? f.explanation ?? null,
+          }))
+        : Array.isArray(
         prediction.factors
       )
         ? prediction.factors
@@ -270,7 +309,21 @@ function normalizePrediction(data) {
     // --------------------------------------------------------
 
     evidence:
-      Array.isArray(
+      Array.isArray(sla?.evidence) && sla.evidence.length > 0
+        ? sla.evidence.map((e) =>
+            typeof e === "string"
+              ? e
+              : {
+                  ...e,
+                  text: [
+                    e.title && (e.source ? `${e.title} (${e.source})` : e.title),
+                    e.key_information,
+                  ]
+                    .filter(Boolean)
+                    .join(" — "),
+                }
+          )
+        : Array.isArray(
         prediction.evidence
       )
         ? prediction.evidence
@@ -306,7 +359,9 @@ function normalizePrediction(data) {
     // --------------------------------------------------------
 
     allocations:
-      Array.isArray(
+      Array.isArray(decision?.allocations)
+        ? decision.allocations
+        : Array.isArray(
         prediction.allocations
       )
         ? prediction.allocations
@@ -399,7 +454,7 @@ function normalizePrediction(data) {
 //      ↓
 // analyzeBatchImages()
 //      ↓
-// POST /api/predictions/:batchId/analyze
+// POST /api/batches/:batchId/analyze
 //      ↓
 // Existing backend / AI service
 //      ↓
@@ -499,10 +554,8 @@ export async function analyzeBatchImages(
     input.transportDurationHours
   );
 
-  appendIfPresent(
-    "daysSinceHarvest",
-    input.daysSinceHarvest
-  );
+  // NOTE: harvest age is intentionally NOT sent. The backend derives it from
+  // the batch's stored harvestDate at analysis time (single source of truth).
 
 
   // ----------------------------------------------------------

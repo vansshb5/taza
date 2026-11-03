@@ -6,10 +6,18 @@ import apiClient from "./client";
 // ============================================================
 
 const ACTION_LABELS = {
+  // AI decision-engine actions
   SELL: "Sell locally",
   DISCOUNT: "Discount now",
   REDISTRIBUTE: "Ship to high-demand location",
   RESCUE: "Redirect to processing",
+  // Stored Recommendation.actionType values
+  SELL_LOCAL: "Sell locally",
+  MOVE_TO_MARKET: "Ship to high-demand location",
+  PROCESS: "Redirect to processing",
+  REDIRECT: "Redirect to alternative channel",
+  URGENT_SELL: "Urgent sell immediately",
+  HOLD: "Hold & monitor",
 };
 
 

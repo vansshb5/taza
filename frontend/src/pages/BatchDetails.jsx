@@ -503,9 +503,9 @@ export default function BatchDetails() {
     null;
 
   const spoilageRisk =
-    prediction?.spoilageRisk ??
-    batch.spoilageRisk ??
-    null;
+    prediction
+      ? prediction.spoilageRisk
+      : batch.spoilageRisk ?? null;
 
   const riskLevel =
     prediction?.riskLevel ||
@@ -815,6 +815,32 @@ export default function BatchDetails() {
           >
 
             {/* ----------------------------------------------
+                SOURCE — always say what kind of prediction this is
+            ---------------------------------------------- */}
+
+            {prediction.source === "ml_python_service" ? (
+              <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
+                <CheckCircle2 size={14} className="shrink-0" />
+                <span>
+                  <span className="font-semibold">AI image analysis</span>
+                  {" "}— computer vision + shelf-life assessment
+                  {prediction.createdAt
+                    ? ` · ${formatDateTime(prediction.createdAt)}`
+                    : ""}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span>
+                  <span className="font-semibold">Heuristic estimate</span>
+                  {" "}— not based on image analysis. Run an AI analysis
+                  with produce images for a real assessment.
+                </span>
+              </div>
+            )}
+
+            {/* ----------------------------------------------
                 METRICS
             ---------------------------------------------- */}
 
@@ -852,16 +878,26 @@ export default function BatchDetails() {
                     ? Math.round(
                         spoilageRisk
                       )
+                    : riskLevel &&
+                      riskLevel !== "UNKNOWN"
+                    ? riskLevel
                     : null
                 }
-                suffix="%"
+                suffix={
+                  spoilageRisk !=
+                  null
+                    ? "%"
+                    : undefined
+                }
               />
 
               <Metric
                 icon={Sparkles}
                 label="Confidence"
                 value={
-                  prediction.confidence
+                  prediction.confidence != null
+                    ? `${Math.round(Number(prediction.confidence) * 100)}%`
+                    : null
                 }
               />
 
@@ -1301,7 +1337,9 @@ export default function BatchDetails() {
                   }
                   label="Confidence"
                   value={
-                    prediction.confidence
+                    prediction.confidence != null
+                      ? `${Math.round(Number(prediction.confidence) * 100)}%`
+                      : null
                   }
                 />
 
@@ -1311,7 +1349,11 @@ export default function BatchDetails() {
                   }
                   label="Source"
                   value={
-                    prediction.source
+                    prediction.source === "ml_python_service"
+                      ? "AI image analysis"
+                      : prediction.source === "heuristic_mock"
+                      ? "Heuristic estimate"
+                      : prediction.source
                   }
                 />
 

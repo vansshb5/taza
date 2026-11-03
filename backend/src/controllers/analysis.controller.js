@@ -27,50 +27,98 @@ import Recommendation from "../models/Recommendation.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import logger from "../utils/logger.js";
 
-const parseJSONField = (raw, fallback) => {
-    if (!raw) return fallback;
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/** Error with an HTTP status that error.middleware.js / this controller can forward. */
+const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
+
+/**
+ * Harvest age is ALWAYS derived from the batch's stored harvestDate at
+ * analysis time. The frontend never sends it (any `daysSinceHarvest` /
+ * `harvestAgeDays` form field is ignored on purpose).
+ *
+ * A harvest date a few hours "in the future" is a timezone artefact (a date
+ * stored as UTC midnight, picked by a user whose local day started earlier),
+ * so up to one day ahead is clamped to 0. Further ahead is real bad data.
+ */
+export const calculateHarvestAgeDays = (harvestDate) => {
+    if (!harvestDate) {
+        throw httpError(422, "Batch has no harvest date, so harvest age cannot be calculated.");
+    }
+    const harvestTime = new Date(harvestDate).getTime();
+    if (!Number.isFinite(harvestTime)) {
+        throw httpError(422, "Batch has an invalid harvest date.");
+    }
+    const ageMs = Date.now() - harvestTime;
+    if (ageMs < -MS_PER_DAY) {
+        throw httpError(422, "Batch harvest date is in the future; fix the harvest date before analyzing.");
+    }
+    return Math.max(0, ageMs) / MS_PER_DAY;
+};
+
+const parseJSONField = (raw, fieldName) => {
+    if (raw === undefined || raw === null || raw === "") return fieldName === "localMarket" ? null : [];
     try {
         return typeof raw === "string" ? JSON.parse(raw) : raw;
     } catch {
-        return fallback;
+        throw httpError(422, `'${fieldName}' must be valid JSON.`);
     }
 };
 
-const riskLevelFromDecision = (shelfLife) => {
-    const risk = shelfLife?.assessment?.spoilage_risk;
-    if (risk === "HIGH") return "HIGH";
-    if (risk === "MEDIUM") return "MEDIUM";
-    if (risk === "LOW") return "LOW";
-    return "MEDIUM";
-};
-
 /**
- * Read a numeric body field, accepting either of two alternate names.
- * Returns undefined (not null) when absent so callers can use `?? undefined`.
+ * Read an optional numeric body field, accepting either of two names.
+ * Absent/blank -> undefined. Present but not a number -> 422 (never silently dropped).
  */
 const readNumber = (body, primaryKey, aliasKey) => {
-    const raw = body[primaryKey] ?? body[aliasKey];
+    const raw = body[primaryKey] ?? (aliasKey ? body[aliasKey] : undefined);
     if (raw === undefined || raw === null || raw === "") return undefined;
     const n = Number(raw);
-    return Number.isNaN(n) ? undefined : n;
+    if (!Number.isFinite(n)) {
+        throw httpError(422, `'${primaryKey}' must be a number.`);
+    }
+    return n;
 };
+
+// Python ActionType (SELL | DISCOUNT | REDISTRIBUTE | RESCUE) -> Recommendation.actionType.
+//   SELL         = sell locally (optimizer: local market allocation)
+//   REDISTRIBUTE = move to another market (optimizer: remote market allocation)
+//   DISCOUNT     = discounted sale of the unallocated remainder
+//   RESCUE       = batch unsafe/unsellable -> processing / feed / disposal route
+const ACTION_TYPE_MAP = {
+    SELL: "SELL_LOCAL",
+    REDISTRIBUTE: "MOVE_TO_MARKET",
+    DISCOUNT: "DISCOUNT",
+    RESCUE: "PROCESS",
+};
+const URGENCY_LEVELS = new Set(["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN"]);
+
+// Spoilage probability is NOT produced by the Python service (it returns a
+// LOW/MEDIUM/HIGH category). Downstream waste/dashboard maths needs a number,
+// so a coarse category-derived proxy is stored; UNKNOWN stays null. The UI
+// must show the category, never this proxy as a measured percentage.
+const SPOILAGE_PROXY = { LOW: 0.15, MEDIUM: 0.5, HIGH: 0.8 };
+
+// One analysis per batch at a time (double-click / retry protection).
+// In-memory: effective for a single Express process.
+const analysesInFlight = new Set();
 
 /**
  * POST /api/batches/:batchId/analyze
- * multipart/form-data: images[] (required), plus optional storage fields.
+ * multipart/form-data: images (required, 1..8 files), plus optional storage fields.
  *
  * Accepts both the frontend's camelCase aliases AND the backend-canonical names:
  *   temperature / temperatureC
  *   humidity / humidityPercent
- *   daysSinceHarvest / harvestAgeDays
- *   transportDurationHours
- *   storageDurationHours
- *   storageType
+ *   transportDurationHours, storageDurationHours, storageType, storageLocation
  *   markets / routes / localMarket (each a JSON string)
+ * Harvest age is NOT accepted from the client (see calculateHarvestAgeDays).
  */
 export const analyzeBatchController = async (req, res, next) => {
+    const { batchId } = req.params;
+    let lockAcquired = false;
+    const created = { inspection: null, prediction: null, recommendation: null };
+
     try {
-        const { batchId } = req.params;
         logger.info("[EXPRESS] analyze request received", { batchId });
         const batch = await getBatchById(batchId);
         if (!batch) return sendError(res, 404, "Batch not found");
@@ -84,36 +132,31 @@ export const analyzeBatchController = async (req, res, next) => {
             return sendError(res, 422, "At least one produce image is required (field name 'images').");
         }
 
-        // ----------------------------------------------------------------
-        // Resolve storage fields — accept both camelCase aliases (frontend)
-        // and the canonical backend names.
-        // ----------------------------------------------------------------
+        if (analysesInFlight.has(batchId)) {
+            return sendError(res, 409, "An analysis is already running for this batch. Please wait for it to finish.");
+        }
+        analysesInFlight.add(batchId);
+        lockAcquired = true;
+
         const storage = {
-           harvestAgeDays: calculateHarvestAgeDays(batch.harvestDate),
+            harvestAgeDays: calculateHarvestAgeDays(batch.harvestDate),
             temperatureC:
                 readNumber(req.body, "temperatureC", "temperature") ??
                 (batch.storageTemperatureCelsius != null ? batch.storageTemperatureCelsius : undefined),
             humidityPercent:
                 readNumber(req.body, "humidityPercent", "humidity") ??
                 (batch.storageHumidityPercent != null ? batch.storageHumidityPercent : undefined),
-            storageDurationHours: readNumber(req.body, "storageDurationHours", null),
-            transportDurationHours: readNumber(req.body, "transportDurationHours", null),
+            storageDurationHours: readNumber(req.body, "storageDurationHours"),
+            transportDurationHours: readNumber(req.body, "transportDurationHours"),
             storageType: req.body.storageType || undefined,
+            storageLocation: req.body.storageLocation || undefined,
         };
 
-        const markets = parseJSONField(req.body.markets, []);
-        const routes = parseJSONField(req.body.routes, []);
-        const localMarket = parseJSONField(req.body.localMarket, null);
+        const markets = parseJSONField(req.body.markets, "markets");
+        const routes = parseJSONField(req.body.routes, "routes");
+        const localMarket = parseJSONField(req.body.localMarket, "localMarket");
 
-        logger.info("[EXPRESS] storage inputs resolved", {
-            batchId,
-            harvestAgeDays: storage.harvestAgeDays,
-            temperatureC: storage.temperatureC,
-            humidityPercent: storage.humidityPercent,
-            storageDurationHours: storage.storageDurationHours,
-            transportDurationHours: storage.transportDurationHours,
-            storageType: storage.storageType,
-        });
+        logger.info("[EXPRESS] storage inputs resolved", { batchId, ...storage });
 
         const result = await analyzeBatch({
             batchId: batch._id.toString(),
@@ -126,149 +169,142 @@ export const analyzeBatchController = async (req, res, next) => {
             localMarket,
         });
 
-        const { cv_analysis: cv, shelf_life: shelfLife, decision } = result;
-
-        const estimatedDays = shelfLife?.assessment?.estimated_remaining_shelf_life_days;
-        const shelfLifeDays = estimatedDays !== undefined ? estimatedDays : null;
-
-        // 1. Create a QualityInspection record for the image inspection
-        let inspection = null;
-        try {
-            const uploadedPhotoPaths = req.files && Array.isArray(req.files)
-                ? req.files.map((f) => f.path || f.filename).filter(Boolean)
-                : [];
-
-            inspection = await QualityInspection.create({
-                batchId: batch._id,
-                inspectionType: "IMAGE",
-                visualQuality: {
-                    score: cv.freshness_score,
-                    color: cv.visual_class,
-                    visibleDefects: cv.visual_class?.toLowerCase().includes("rotten") ? [cv.visual_class] : [],
-                },
-                physicalQuality: {
-                    firmness: null,
-                    surfaceCondition: cv.visual_class,
-                },
-                environmentalData: {
-                    temperature: storage.temperatureC ?? null,
-                    humidity: storage.humidityPercent ?? null,
-                },
-                imageUrl: uploadedPhotoPaths[0] || null,
-                notes: `AI Vision classified as ${cv.visual_class} (freshness score: ${cv.freshness_score}/100, confidence: ${Math.round((cv.confidence || 0) * 100)}%)`,
-            });
-        } catch (qiError) {
-            logger.warn("Failed to create QualityInspection for AI analysis:", qiError.message);
+        const { cv_analysis: cv, shelf_life: shelfLife, decision } = result || {};
+        if (!cv || !shelfLife?.assessment || !decision?.recommendation) {
+            throw new MLServiceError(
+                "AI service returned an incomplete analysis (missing cv_analysis, shelf_life or decision).",
+                502
+            );
         }
-        const calculateHarvestAgeDays = (harvestDate) => {
-            const harvestTime = new Date(harvestDate).getTime();
 
-            if (!Number.isFinite(harvestTime)) {
-                throw new Error("Invalid harvest date for batch");
-            }
+        const estimatedDays = shelfLife.assessment.estimated_remaining_shelf_life_days;
+        const shelfLifeDays = estimatedDays ?? null;
+        const spoilageRisk = shelfLife.assessment.spoilage_risk;
+        const riskLevel = ["LOW", "MEDIUM", "HIGH"].includes(spoilageRisk) ? spoilageRisk : "UNKNOWN";
+        const spoilageProbability = SPOILAGE_PROXY[riskLevel] ?? null;
 
-            const ageMs = Date.now() - harvestTime;
-
-            if (ageMs < 0) {
-                throw new Error("Harvest date cannot be in the future");
-            }
-
-            return ageMs / (1000 * 60 * 60 * 24);
-        };
-        // 2. Create the Prediction record
-        const spoilageProbability =
-            shelfLife?.assessment?.spoilage_risk === "HIGH"
-                ? 0.8
-                : shelfLife?.assessment?.spoilage_risk === "MEDIUM"
-                    ? 0.5
-                    : shelfLife?.assessment?.spoilage_risk === "LOW"
-                        ? 0.15
-                        : 0.5;
-
-        const prediction = await Prediction.create({
+        // 1. QualityInspection for the image inspection
+        created.inspection = await QualityInspection.create({
             batchId: batch._id,
-            inspectionId: inspection?._id || null,
+            inspectionType: "IMAGE",
+            visualQuality: {
+                score: cv.freshness_score,
+                color: cv.visual_class,
+                visibleDefects: cv.visual_class?.toLowerCase().includes("rotten") ? [cv.visual_class] : [],
+            },
+            physicalQuality: {
+                firmness: null,
+                surfaceCondition: cv.visual_class,
+            },
+            environmentalData: {
+                temperature: storage.temperatureC ?? null,
+                humidity: storage.humidityPercent ?? null,
+            },
+            imageUrl: null, // images are streamed to the AI service and not persisted
+            notes: `AI Vision classified as ${cv.visual_class} (freshness score: ${cv.freshness_score}/100, confidence: ${Math.round((cv.confidence || 0) * 100)}%)`,
+        });
+
+        // 2. Prediction
+        created.prediction = await Prediction.create({
+            batchId: batch._id,
+            inspectionId: created.inspection._id,
             freshnessScore: cv.freshness_score,
             shelfLifeDays,
             spoilageProbability,
-            riskLevel: riskLevelFromDecision(shelfLife),
-            confidence: shelfLife?.assessment?.confidence ?? cv.confidence,
+            riskLevel,
+            confidence: shelfLife.assessment.confidence ?? cv.confidence,
             source: "ml_python_service",
             visualClass: cv.visual_class,
             classDistribution: cv.class_distribution,
             shelfLifeAssessment: shelfLife,
             decision,
+            notes:
+                "spoilageProbability is a category-derived proxy (LOW=0.15, MEDIUM=0.5, HIGH=0.8); " +
+                "the AI service reports only the spoilage-risk category.",
             inputSignals: {
                 visualScore: cv.freshness_score,
                 temperature: storage.temperatureC ?? null,
                 humidity: storage.humidityPercent ?? null,
-                daysSinceHarvest: storage.harvestAgeDays ?? null,
+                daysSinceHarvest: storage.harvestAgeDays,
+                storageDays:
+                    storage.storageDurationHours != null ? storage.storageDurationHours / 24 : null,
                 transportDurationHours: storage.transportDurationHours ?? null,
                 storageType: storage.storageType ?? null,
+                storageLocation: storage.storageLocation ?? null,
             },
         });
+        const prediction = created.prediction;
 
-        // 3. Create Recommendation record if decision recommendation is present
-        try {
-            const primaryAction = decision?.recommendation?.primary_action || "HOLD";
-            const urgency = decision?.recommendation?.urgency || "LOW";
-            const reason =
-                decision?.reasoning ||
-                `AI recommendation: ${primaryAction} based on visual freshness and shelf life assessment.`;
-
-            let actionType = "HOLD";
-            const actionUpper = primaryAction.toUpperCase();
-            if (actionUpper.includes("SELL_LOCAL") || actionUpper.includes("LOCAL")) actionType = "SELL_LOCAL";
-            else if (actionUpper.includes("MOVE") || actionUpper.includes("TRANSPORT")) actionType = "MOVE_TO_MARKET";
-            else if (actionUpper.includes("DISCOUNT")) actionType = "DISCOUNT";
-            else if (actionUpper.includes("PROCESS")) actionType = "PROCESS";
-            else if (actionUpper.includes("REDIRECT")) actionType = "REDIRECT";
-            else if (actionUpper.includes("URGENT")) actionType = "URGENT_SELL";
-
-            let urgencyLevel = "LOW";
-            const urgUpper = urgency.toUpperCase();
-            if (urgUpper.includes("CRIT")) urgencyLevel = "CRITICAL";
-            else if (urgUpper.includes("HIGH")) urgencyLevel = "HIGH";
-            else if (urgUpper.includes("MED")) urgencyLevel = "MEDIUM";
-
-            await Recommendation.create({
-                batchId: batch._id,
-                predictionId: prediction._id,
-                actionType,
-                urgencyLevel,
-                reason,
-                targetMarket: decision?.allocations?.[0]?.market || null,
-                reasonFactors: {
-                    shelfLifeDays: prediction.shelfLifeDays,
-                    spoilageProbability: prediction.spoilageProbability,
-                    freshnessScore: prediction.freshnessScore,
-                    riskLevel: prediction.riskLevel,
-                },
-                confidence: prediction.confidence,
-            });
-        } catch (recError) {
-            logger.warn("Failed to create Recommendation for AI analysis:", recError.message);
+        // 3. Recommendation (mapped from the Python decision, never defaulted to HOLD)
+        const primaryAction = decision.recommendation.primary_action;
+        let actionType = ACTION_TYPE_MAP[primaryAction];
+        // The engine headlines SELL when demand absorbs the whole batch, which
+        // can include remote markets. Keep actionType consistent with the
+        // targetMarket we store: a remote top allocation is a move, not a local sale.
+        if (primaryAction === "SELL" && decision.allocations?.[0]?.action === "REDISTRIBUTE") {
+            actionType = "MOVE_TO_MARKET";
         }
+        if (!actionType) {
+            throw new MLServiceError(`AI service returned an unknown primary_action '${primaryAction}'.`, 502);
+        }
+        const urgencyRaw = String(decision.recommendation.urgency || "UNKNOWN").toUpperCase();
+        const urgencyLevel = URGENCY_LEVELS.has(urgencyRaw) ? urgencyRaw : "UNKNOWN";
+        const topAllocation = decision.allocations?.[0];
 
-        // 4. Update Batch prediction cache
-        await updateBatchPredictionCache(batchId, {
+        created.recommendation = await Recommendation.create({
+            batchId: batch._id,
+            predictionId: prediction._id,
+            actionType,
+            urgencyLevel,
+            reason: decision.reasoning || `AI decision engine recommended ${primaryAction}.`,
+            targetMarket: topAllocation?.destination ?? null,
+            reasonFactors: {
+                shelfLifeDays: prediction.shelfLifeDays,
+                spoilageProbability: prediction.spoilageProbability,
+                freshnessScore: prediction.freshnessScore,
+                bestMarket: topAllocation?.destination ?? null,
+                riskLevel: prediction.riskLevel,
+            },
+            expectedWasteKg: decision.impact?.expected_waste_kg ?? null,
+            confidence: decision.recommendation.confidence ?? prediction.confidence,
+        });
+
+        // 4. Batch prediction cache (null stays null — never faked as 0 days)
+        await updateBatchPredictionCache(batch._id, {
             freshnessScore: cv.freshness_score,
-            shelfLifeDays: shelfLifeDays ?? 0,
-            spoilageProbability: prediction.spoilageProbability,
+            shelfLifeDays,
+            spoilageProbability,
         });
 
-        logger.info("[EXPRESS] response sent", {
-            batchId,
-            visualClass: cv.visual_class,
-            primaryAction: decision?.recommendation?.primary_action,
-        });
-
+        logger.info("[EXPRESS] response sent", { batchId, visualClass: cv.visual_class, primaryAction });
         return sendSuccess(res, 201, prediction, "Batch analyzed successfully");
     } catch (error) {
+        // Compensating rollback (no multi-document transaction: the default
+        // standalone MongoDB does not support them). Children are deleted
+        // before parents, and any failure to clean up is logged loudly with
+        // the orphan ids rather than ignored.
+        const cleanup = [
+            ["Recommendation", Recommendation, created.recommendation],
+            ["Prediction", Prediction, created.prediction],
+            ["QualityInspection", QualityInspection, created.inspection],
+        ].filter(([, , doc]) => doc);
+        const outcomes = await Promise.allSettled(cleanup.map(([, Model, doc]) => Model.deleteOne({ _id: doc._id })));
+        outcomes.forEach((o, i) => {
+            if (o.status === "rejected") {
+                logger.error("[EXPRESS] ROLLBACK FAILED — orphan record left behind", {
+                    batchId,
+                    model: cleanup[i][0],
+                    id: String(cleanup[i][2]._id),
+                    message: o.reason?.message,
+                });
+            }
+        });
         if (error instanceof MLServiceError) {
             return sendError(res, error.statusCode, error.message, error.detail);
         }
         next(error);
+    } finally {
+        if (lockAcquired) analysesInFlight.delete(batchId);
     }
 };
 
@@ -317,9 +353,9 @@ export const getBatchInsightsController = async (req, res, next) => {
             );
         }
 
-        const markets = parseJSONField(req.body?.markets, []);
-        const routes = parseJSONField(req.body?.routes, []);
-        const localMarket = parseJSONField(req.body?.localMarket, null);
+        const markets = parseJSONField(req.body?.markets, "markets");
+        const routes = parseJSONField(req.body?.routes, "routes");
+        const localMarket = parseJSONField(req.body?.localMarket, "localMarket");
 
         const shelfLifeAssessment = latest.shelfLifeAssessment || {
             assessment: {

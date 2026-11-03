@@ -82,12 +82,16 @@ export const runBatchPrediction = async (batchId) => {
 
     const prediction = await Prediction.create(predictionData);
 
-    // Update batch cache
-    await updateBatchPredictionCache(batchId, {
-        freshnessScore: predictionData.freshnessScore,
-        shelfLifeDays: predictionData.shelfLifeDays,
-        spoilageProbability: predictionData.spoilageProbability,
-    });
+    // Update batch cache — but never let a heuristic estimate overwrite the
+    // cached values of a real image-based ML analysis.
+    const hasMlAnalysis = await Prediction.exists({ batchId, source: "ml_python_service" });
+    if (!hasMlAnalysis) {
+        await updateBatchPredictionCache(batchId, {
+            freshnessScore: predictionData.freshnessScore,
+            shelfLifeDays: predictionData.shelfLifeDays,
+            spoilageProbability: predictionData.spoilageProbability,
+        });
+    }
 
     logger.info("Prediction computed", {
         batchId,
@@ -113,9 +117,26 @@ export const getPredictionHistory = async (batchId, limit = 10) => {
 
 /**
  * Get the latest prediction for a batch.
+ * `source` (optional) restricts to one source, e.g. "ml_python_service".
+ * With no source this returns the newest of ANY kind — fine for the numeric
+ * pipelines (profit/recommendation) but NOT for the batch details view, which
+ * uses getPreferredPrediction below.
  */
-export const getLatestPrediction = async (batchId) => {
-    return Prediction.findOne({ batchId })
+export const getLatestPrediction = async (batchId, source = null) => {
+    const filter = source ? { batchId, source } : { batchId };
+    return Prediction.findOne(filter)
         .sort({ createdAt: -1 })
         .populate("inspectionId", "inspectionType createdAt");
+};
+
+/**
+ * Prediction for the main batch view: the latest real ML analysis if one
+ * exists, otherwise the latest heuristic one. A newer heuristic run never
+ * hides an older ML analysis. Callers can tell which they got from `.source`.
+ */
+export const getPreferredPrediction = async (batchId) => {
+    return (
+        (await getLatestPrediction(batchId, "ml_python_service")) ||
+        (await getLatestPrediction(batchId))
+    );
 };

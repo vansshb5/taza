@@ -18,7 +18,7 @@
 
 import Recommendation from "../models/Recommendation.js";
 import { getBatchById } from "./batch.service.js";
-import { getLatestPrediction } from "./prediction.service.js";
+import { getPreferredPrediction } from "./prediction.service.js";
 import { getLatestProfitAnalysis } from "./profit.service.js";
 import logger from "../utils/logger.js";
 
@@ -169,7 +169,7 @@ export const generateRecommendation = async (batchId) => {
     const batch = await getBatchById(batchId);
     if (!batch) throw Object.assign(new Error("Batch not found"), { statusCode: 404 });
 
-    const prediction = await getLatestPrediction(batchId);
+    const prediction = await getPreferredPrediction(batchId);
     if (!prediction)
         throw Object.assign(
             new Error("No prediction found. Run POST /api/predictions/:batchId/run first."),
