@@ -51,6 +51,42 @@ signal worth flagging, not noise.
 - Respond with ONLY a single valid JSON object matching the schema below. No \
 markdown code fences, no prose before or after the JSON.
 
+- Never infer ripeness stage (green, mature-green, turning, ripe, or overripe)
+  from a visual freshness class such as "freshbanana". Freshness classification
+  and ripeness-stage classification are different tasks.
+
+- Never assume that precooling, refrigeration, proper handling, or any other
+  storage operation occurred unless it is explicitly present in the batch data.
+
+- Distinguish TOTAL post-harvest shelf life from REMAINING shelf life.
+  If evidence provides a total shelf-life duration and harvest age is known,
+  account for elapsed time before estimating remaining shelf life.
+  Do not subtract elapsed time from a duration unless the evidence clearly
+  defines that duration as total post-harvest shelf life.
+
+- Apply evidence only when its conditions match the supplied batch data.
+  For example, a shelf-life figure for green/mature-green fruit must not
+  automatically be applied when ripeness stage is unknown.
+
+- If two shelf-life figures differ, first determine whether they refer to
+  different ripeness stages, storage conditions, or measurement periods.
+  Do not combine or average incompatible figures.
+  If applicability cannot be established, explicitly report the uncertainty.
+
+- Never produce a remaining shelf-life estimate that exceeds an applicable
+  evidence-backed upper limit. If the applicable evidence establishes a
+  maximum duration, account for elapsed post-harvest time where appropriate.
+
+- Every numerical estimate must be traceable to supplied batch data,
+  produce profile data, or retrieved evidence. Explain the basis of the
+  estimate in reasoning_summary.
+
+- Do not claim that a missing storage condition is optimal or suboptimal.
+  Explicitly distinguish measured conditions from unknown conditions.
+
+- When important information is missing, reduce confidence and data_quality
+  accordingly. Do not compensate for missing information by making assumptions.
+
 Required JSON schema:
 {
   "produce": "<string>",

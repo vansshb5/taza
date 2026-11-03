@@ -89,7 +89,7 @@ export const analyzeBatchController = async (req, res, next) => {
         // and the canonical backend names.
         // ----------------------------------------------------------------
         const storage = {
-            harvestAgeDays: readNumber(req.body, "harvestAgeDays", "daysSinceHarvest"),
+           harvestAgeDays: calculateHarvestAgeDays(batch.harvestDate),
             temperatureC:
                 readNumber(req.body, "temperatureC", "temperature") ??
                 (batch.storageTemperatureCelsius != null ? batch.storageTemperatureCelsius : undefined),
@@ -110,6 +110,7 @@ export const analyzeBatchController = async (req, res, next) => {
             harvestAgeDays: storage.harvestAgeDays,
             temperatureC: storage.temperatureC,
             humidityPercent: storage.humidityPercent,
+            storageDurationHours: storage.storageDurationHours,
             transportDurationHours: storage.transportDurationHours,
             storageType: storage.storageType,
         });
@@ -159,16 +160,30 @@ export const analyzeBatchController = async (req, res, next) => {
         } catch (qiError) {
             logger.warn("Failed to create QualityInspection for AI analysis:", qiError.message);
         }
+        const calculateHarvestAgeDays = (harvestDate) => {
+            const harvestTime = new Date(harvestDate).getTime();
 
+            if (!Number.isFinite(harvestTime)) {
+                throw new Error("Invalid harvest date for batch");
+            }
+
+            const ageMs = Date.now() - harvestTime;
+
+            if (ageMs < 0) {
+                throw new Error("Harvest date cannot be in the future");
+            }
+
+            return ageMs / (1000 * 60 * 60 * 24);
+        };
         // 2. Create the Prediction record
         const spoilageProbability =
             shelfLife?.assessment?.spoilage_risk === "HIGH"
                 ? 0.8
                 : shelfLife?.assessment?.spoilage_risk === "MEDIUM"
-                ? 0.5
-                : shelfLife?.assessment?.spoilage_risk === "LOW"
-                ? 0.15
-                : 0.5;
+                    ? 0.5
+                    : shelfLife?.assessment?.spoilage_risk === "LOW"
+                        ? 0.15
+                        : 0.5;
 
         const prediction = await Prediction.create({
             batchId: batch._id,

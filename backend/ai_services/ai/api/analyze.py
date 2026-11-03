@@ -99,7 +99,10 @@ def analyze_batch(
     batch_id: str = Form(...),
     produce: str = Form(...),
     quantity_kg: float = Form(...),
-    images: List[UploadFile] = File(...),
+    images: List[UploadFile] = File(
+    ...,
+    media_type="image/*"
+),
     harvest_age_days: Optional[float] = Form(None),
     temperature_c: Optional[float] = Form(None),
     humidity_percent: Optional[float] = Form(None),
